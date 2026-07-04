@@ -27,6 +27,10 @@ def _supabase_rest_url() -> str:
     if not url:
         return ""
     if url.startswith("https://") or url.startswith("http://"):
+        if url.endswith("/rest/v1"):
+            url = url[: -len("/rest/v1")]
+        elif "/rest/v1/" in url:
+            url = url.split("/rest/v1/", 1)[0]
         return url
     return ""
 
