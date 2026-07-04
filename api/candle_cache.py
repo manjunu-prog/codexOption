@@ -22,11 +22,20 @@ def _secret_value(key: str) -> str:
         return ""
 
 
+def _supabase_rest_url() -> str:
+    url = _secret_value("SUPABASE_URL").strip().rstrip("/")
+    if not url:
+        return ""
+    if url.startswith("https://") or url.startswith("http://"):
+        return url
+    return ""
+
+
 class SupabaseCandleCache:
     table = "candles"
 
     def __init__(self):
-        self.url = _secret_value("SUPABASE_URL").rstrip("/")
+        self.url = _supabase_rest_url()
         self.key = _secret_value("SUPABASE_SERVICE_ROLE_KEY") or _secret_value("SUPABASE_ANON_KEY")
         self.enabled = bool(self.url and self.key)
 
@@ -51,7 +60,10 @@ class SupabaseCandleCache:
             "order": "timestamp.asc",
             "limit": "10000",
         }
-        response = requests.get(self.endpoint, headers=self.headers, params=params, timeout=12)
+        try:
+            response = requests.get(self.endpoint, headers=self.headers, params=params, timeout=12)
+        except requests.RequestException:
+            return pd.DataFrame()
         if response.status_code >= 400:
             return pd.DataFrame()
 
@@ -82,18 +94,24 @@ class SupabaseCandleCache:
             )
 
         for start in range(0, len(rows), 500):
-            requests.post(self.endpoint, headers=self.headers, json=rows[start : start + 500], timeout=20)
+            try:
+                requests.post(self.endpoint, headers=self.headers, json=rows[start : start + 500], timeout=20)
+            except requests.RequestException:
+                return
 
     def cleanup(self, keep_days: int = 4) -> None:
         if not self.enabled:
             return
         cutoff = int((datetime.now() - timedelta(days=keep_days)).timestamp())
-        requests.delete(
-            self.endpoint,
-            headers=self.headers,
-            params={"timestamp": f"lt.{cutoff}"},
-            timeout=12,
-        )
+        try:
+            requests.delete(
+                self.endpoint,
+                headers=self.headers,
+                params={"timestamp": f"lt.{cutoff}"},
+                timeout=12,
+            )
+        except requests.RequestException:
+            return
 
     @property
     def endpoint(self) -> str:
