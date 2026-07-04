@@ -18,24 +18,32 @@ class IndicatorEngine {
         this.series = {};
         this.zones = [];
         this.structureZones = [];
+        this.alphaTrendFill = [];
         this.labels = [];
         this.zoneWatchFrame = null;
+        this.alphaTrendFrame = null;
         this.lastZoneSignature = "";
+        this.lastAlphaTrendSignature = "";
+        this.alphaTrendLayer = this.createAlphaTrendLayer();
         this.zoneLayer = this.createZoneLayer();
         this.labelLayer = this.createLabelLayer();
         this.chart.timeScale().subscribeVisibleTimeRangeChange(()=>{
+            this.renderAlphaTrendFill();
             this.renderZones();
             this.renderLabels();
         });
         window.addEventListener("resize",()=>{
+            this.renderAlphaTrendFill();
             this.renderZones();
             this.renderLabels();
         });
         this.chartEngine.container.addEventListener("pointermove",()=>{
+            this.scheduleAlphaTrendRender();
             this.scheduleZoneRender();
             this.scheduleLabelRender();
         });
         this.chartEngine.container.addEventListener("wheel",()=>{
+            this.scheduleAlphaTrendRender();
             this.scheduleZoneRender();
             this.scheduleLabelRender();
         });
@@ -47,6 +55,16 @@ class IndicatorEngine {
         const parent = this.chartEngine.container.parentElement;
         const layer = document.createElement("div");
         layer.className = "zoneLayer";
+        parent.appendChild(layer);
+        return layer;
+
+    }
+
+    createAlphaTrendLayer(){
+
+        const parent = this.chartEngine.container.parentElement;
+        const layer = document.createElement("div");
+        layer.className = "alphaTrendLayer";
         parent.appendChild(layer);
         return layer;
 
@@ -143,25 +161,25 @@ class IndicatorEngine {
 
         if(!data) return;
 
-        this.addLine(
-            "AlphaTrend_Body",
-            data.body || data.current || [],
-            "rgba(0,230,15,0.55)",
-            4
-        );
+        if(this.series.AlphaTrend_Body){
+            this.chart.removeSeries(this.series.AlphaTrend_Body);
+            delete this.series.AlphaTrend_Body;
+        }
+
+        this.setAlphaTrendFill(data.current || [], data.lag || []);
 
         this.addLine(
             "AlphaTrend",
             data.current || [],
             "#0022FC",
-            3
+            4
         );
 
         this.addLine(
             "AlphaTrend_Lag",
             data.lag || [],
             "#FC0400",
-            3
+            4
         );
 
         if(this.chartEngine && this.chartEngine.setMarkerSource){
@@ -176,6 +194,31 @@ class IndicatorEngine {
             text:marker.text,
             tone:marker.text === "BUY" ? "buy" : "sell"
         })));
+
+    }
+
+    setAlphaTrendFill(current, lag){
+
+        const lagByTime = new Map((lag || []).map(point=>[String(point.time), point.value]));
+        let lastTone = "bullish";
+        this.alphaTrendFill = (current || []).map(point=>{
+            const lagValue = lagByTime.get(String(point.time));
+            if(!Number.isFinite(point.value) || !Number.isFinite(lagValue)) return null;
+            if(point.value > lagValue){
+                lastTone = "bullish";
+            }else if(point.value < lagValue){
+                lastTone = "bearish";
+            }
+            return {
+                time: point.time,
+                current: point.value,
+                lag: lagValue,
+                tone: lastTone
+            };
+        }).filter(Boolean);
+
+        this.renderAlphaTrendFill();
+        setTimeout(()=>this.renderAlphaTrendFill(), 100);
 
     }
 
@@ -293,10 +336,88 @@ class IndicatorEngine {
 
     }
 
+    scheduleAlphaTrendRender(){
+
+        if(this.alphaTrendFrame != null || !this.alphaTrendFill || this.alphaTrendFill.length === 0) return;
+
+        this.alphaTrendFrame = requestAnimationFrame(()=>{
+            this.alphaTrendFrame = null;
+            this.renderAlphaTrendFill(false);
+        });
+
+    }
+
     scheduleLabelRender(){
 
         if(!this.labels || this.labels.length === 0) return;
         requestAnimationFrame(()=>this.renderLabels());
+
+    }
+
+    renderAlphaTrendFill(force=true){
+
+        if(!this.alphaTrendLayer || !this.chartEngine || !this.chartEngine.candleSeries) return;
+
+        const points = this.alphaTrendFill || [];
+        if(points.length < 2){
+            this.alphaTrendLayer.innerHTML = "";
+            this.lastAlphaTrendSignature = "";
+            return;
+        }
+
+        const width = this.chartEngine.container.clientWidth || 1;
+        const height = this.chartEngine.container.clientHeight || 1;
+        const polygons = [];
+
+        for(let index = 1; index < points.length; index++){
+            const prev = points[index - 1];
+            const current = points[index];
+            const x1 = this.timeToCoordinate(prev.time);
+            const x2 = this.timeToCoordinate(current.time);
+            const yCurrent1 = this.chartEngine.candleSeries.priceToCoordinate(prev.current);
+            const yCurrent2 = this.chartEngine.candleSeries.priceToCoordinate(current.current);
+            const yLag1 = this.chartEngine.candleSeries.priceToCoordinate(prev.lag);
+            const yLag2 = this.chartEngine.candleSeries.priceToCoordinate(current.lag);
+            if([x1, x2, yCurrent1, yCurrent2, yLag1, yLag2].some(value=>value == null)) continue;
+            if(Math.abs(x2 - x1) > width * 0.25) continue;
+
+            polygons.push({
+                tone: current.tone || prev.tone || "bullish",
+                points: [
+                    [x1, yCurrent1],
+                    [x2, yCurrent2],
+                    [x2, yLag2],
+                    [x1, yLag1]
+                ]
+            });
+        }
+
+        const signature = polygons.map(item =>
+            `${item.tone}:${item.points.map(([x,y])=>`${Math.round(x)},${Math.round(y)}`).join(";")}`
+        ).join("|");
+
+        if(!force && signature === this.lastAlphaTrendSignature) return;
+        this.lastAlphaTrendSignature = signature;
+
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("width", String(width));
+        svg.setAttribute("height", String(height));
+        svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        svg.setAttribute("preserveAspectRatio", "none");
+
+        polygons.forEach(item=>{
+            const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+            polygon.setAttribute("points", item.points.map(([x,y])=>`${x},${y}`).join(" "));
+            polygon.setAttribute(
+                "fill",
+                item.tone === "bullish" ? "rgba(0,230,15,0.68)" : "rgba(128,0,11,0.72)"
+            );
+            polygon.setAttribute("stroke", "none");
+            svg.appendChild(polygon);
+        });
+
+        this.alphaTrendLayer.innerHTML = "";
+        this.alphaTrendLayer.appendChild(svg);
 
     }
 
