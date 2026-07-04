@@ -99,6 +99,7 @@ with st.sidebar:
     index_name = st.selectbox("Index", list(INDEX_CONFIG.keys()), index=0)
     tf_label = st.selectbox("Timeframe", list(TIMEFRAMES.keys()), index=3)
     days = st.slider("History days", 1, 30, 5)
+    latest_session_only = st.toggle("Latest session only", value=True)
     strike_window = st.slider("Strike window", 5, 40, INDEX_CONFIG[index_name]["strikecount"])
     auto_refresh = st.toggle("Auto refresh", value=True)
     refresh_seconds = st.slider("Refresh seconds", 5, 120, 30)
@@ -240,6 +241,57 @@ def build_overlays(df: pd.DataFrame) -> dict:
     }
 
 
+def latest_session_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or TIMEFRAMES[tf_label] == "D":
+        return df
+    latest_date = df.index.max().date()
+    return df[df.index.date == latest_date]
+
+
+def trim_overlays(overlays: dict, df: pd.DataFrame) -> dict:
+    if df.empty:
+        return overlays
+    start_ts = int(df.index.min().timestamp())
+    end_ts = int(df.index.max().timestamp())
+
+    def point_in_session(item: dict) -> bool:
+        timestamp = int(item.get("time") or item.get("startTime") or item.get("endTime") or 0)
+        return start_ts <= timestamp <= end_ts
+
+    def line_touches_session(item: dict) -> bool:
+        start = int(item.get("startTime") or item.get("time") or 0)
+        end = int(item.get("endTime") or item.get("time") or start)
+        return end >= start_ts and start <= end_ts
+
+    trimmed = dict(overlays)
+    trimmed["emas"] = [
+        {**item, "data": [point for point in item.get("data", []) if point_in_session(point)]}
+        for item in overlays.get("emas", [])
+    ]
+    if overlays.get("vwap"):
+        trimmed["vwap"] = [point for point in overlays["vwap"] if point_in_session(point)]
+    if overlays.get("alphatrend"):
+        trimmed["alphatrend"] = {
+            key: [item for item in value if point_in_session(item)]
+            for key, value in overlays["alphatrend"].items()
+        }
+    if overlays.get("angle_market"):
+        trimmed["angle_market"] = {
+            "lines": [item for item in overlays["angle_market"].get("lines", []) if line_touches_session(item)],
+            "labels": [item for item in overlays["angle_market"].get("labels", []) if point_in_session(item)],
+        }
+    if overlays.get("zones"):
+        trimmed["zones"] = [item for item in overlays["zones"] if line_touches_session(item)]
+    if overlays.get("structure"):
+        trimmed["structure"] = {
+            "markers": [item for item in overlays["structure"].get("markers", []) if point_in_session(item)],
+            "levels": [item for item in overlays["structure"].get("levels", []) if line_touches_session(item)],
+            "zones": [item for item in overlays["structure"].get("zones", []) if line_touches_session(item)],
+            "trendLines": [item for item in overlays["structure"].get("trendLines", []) if line_touches_session(item)],
+        }
+    return trimmed
+
+
 def send_fresh_alerts(spec: dict, df: pd.DataFrame, overlays: dict) -> None:
     notifier = get_notifier()
     if not notifier.enabled or df.empty:
@@ -322,17 +374,18 @@ def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, di
         st.warning(f"{spec['label']} returned no candles.")
         return None, None
 
-    overlays = build_overlays(chart_df)
+    display_df = latest_session_df(chart_df) if latest_session_only else chart_df
+    overlays = trim_overlays(build_overlays(chart_df), display_df)
     send_fresh_alerts(spec, chart_df, overlays)
-    last_row = chart_df.iloc[-1]
-    delta = volume_delta(chart_df.tail(80))
+    last_row = display_df.iloc[-1]
+    delta = volume_delta(display_df.tail(80))
     st.caption(
         f"{spec['label']} | Last {last_row.close:,.2f} | "
-        f"Delta {delta['delta']:,.0f} ({delta['delta_pct']:.1f}%) | Candles {len(chart_df):,}"
+        f"Delta {delta['delta']:,.0f} ({delta['delta_pct']:.1f}%) | Candles {len(display_df):,}"
     )
     TradingChart().render(
-        candles=HistoricalData.candle_json(chart_df),
-        volume=HistoricalData.volume_json(chart_df),
+        candles=HistoricalData.candle_json(display_df),
+        volume=HistoricalData.volume_json(display_df),
         emas=overlays["emas"],
         vwap=overlays["vwap"],
         cpr=overlays["cpr"],
