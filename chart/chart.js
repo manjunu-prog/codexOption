@@ -19,6 +19,7 @@ class ChartEngine {
         this.markerSources = {};
         this.storageKey = "OptionTerminal:v2:chart";
         this.pendingView = null;
+        this.suspendViewStore = false;
 
         this.init();
 
@@ -159,14 +160,14 @@ class ChartEngine {
         });
 
         this.chart.timeScale().subscribeVisibleLogicalRangeChange((range)=>{
-            if(!range || !this.storageKey) return;
+            if(this.suspendViewStore || !range || !this.storageKey) return;
             this.storeView({time: range});
         });
 
         const priceScale = this.chart.priceScale("right");
         if(priceScale && priceScale.subscribeVisiblePriceRangeChange){
             priceScale.subscribeVisiblePriceRangeChange((range)=>{
-                if(!range || !this.storageKey) return;
+                if(this.suspendViewStore || !range || !this.storageKey) return;
                 this.storeView({price: {from: range.from, to: range.to}});
             });
         }
@@ -238,14 +239,17 @@ class ChartEngine {
         );
 
         this.lastCandles = cleanData;
-        const view = this.readStoredView();
-        this.candleSeries.setData(cleanData);
+        const view = this.captureView() || this.readStoredView();
+        this.withSuspendedViewStore(()=>{
+            this.candleSeries.setData(cleanData);
+        });
         if(!this.applyView(view)){
             this.showRecentSession();
         }else{
             this.pendingView = view;
             setTimeout(()=>this.applyView(this.pendingView), 0);
             setTimeout(()=>this.applyView(this.pendingView), 120);
+            setTimeout(()=>this.applyView(this.pendingView), 320);
         }
 
     }
@@ -292,6 +296,7 @@ class ChartEngine {
 
     storeView(view){
 
+        if(this.suspendViewStore) return;
         const current = this.readStoredView() || {};
         const payload = JSON.stringify({
             time: view.time || current.time,
@@ -326,20 +331,54 @@ class ChartEngine {
 
         if(!view || !view.time || !Number.isFinite(view.time.from) || !Number.isFinite(view.time.to)) return false;
         try{
-            this.chart.timeScale().setVisibleLogicalRange(view.time);
-            const priceScale = this.chart.priceScale("right");
-            if(
-                view.price &&
-                Number.isFinite(view.price.from) &&
-                Number.isFinite(view.price.to) &&
-                priceScale &&
-                priceScale.setVisibleRange
-            ){
-                priceScale.setVisibleRange(view.price);
-            }
+            this.withSuspendedViewStore(()=>{
+                this.chart.timeScale().setVisibleLogicalRange(view.time);
+                const priceScale = this.chart.priceScale("right");
+                if(
+                    view.price &&
+                    Number.isFinite(view.price.from) &&
+                    Number.isFinite(view.price.to) &&
+                    view.price.to > view.price.from &&
+                    priceScale &&
+                    priceScale.setVisibleRange
+                ){
+                    priceScale.setVisibleRange(view.price);
+                }
+            });
             return true;
         }catch(e){
             return false;
+        }
+
+    }
+
+    captureView(){
+
+        try{
+            const time = this.chart.timeScale().getVisibleLogicalRange();
+            if(!time || !Number.isFinite(time.from) || !Number.isFinite(time.to)) return false;
+            const priceScale = this.chart.priceScale("right");
+            const price = priceScale && priceScale.getVisibleRange ? priceScale.getVisibleRange() : null;
+            return {
+                time,
+                price: price && Number.isFinite(price.from) && Number.isFinite(price.to) && price.to > price.from
+                    ? {from: price.from, to: price.to}
+                    : undefined
+            };
+        }catch(e){
+            return false;
+        }
+
+    }
+
+    withSuspendedViewStore(callback){
+
+        const previous = this.suspendViewStore;
+        this.suspendViewStore = true;
+        try{
+            return callback();
+        }finally{
+            this.suspendViewStore = previous;
         }
 
     }

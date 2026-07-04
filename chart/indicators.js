@@ -17,6 +17,7 @@ class IndicatorEngine {
         this.chart = chartEngine.chart;
         this.series = {};
         this.zones = [];
+        this.structureZones = [];
         this.labels = [];
         this.zoneWatchFrame = null;
         this.lastZoneSignature = "";
@@ -306,7 +307,12 @@ class IndicatorEngine {
         const timeScale = this.chart.timeScale();
         const renderedZones = [];
 
-        (this.zones || []).forEach(zone=>{
+        const allZones = [
+            ...(this.zones || []),
+            ...(this.structureZones || [])
+        ];
+
+        allZones.forEach(zone=>{
 
             const x1 = this.timeToCoordinate(zone.startTime);
             const x2 = this.timeToCoordinate(zone.endTime);
@@ -346,10 +352,15 @@ class IndicatorEngine {
             box.style.borderColor = zone.border || "rgba(148,163,184,0.65)";
             box.style.borderStyle = zone.borderStyle || "solid";
 
-            const label = document.createElement("span");
-            label.textContent = zone.label || "";
-            label.style.color = zone.text || zone.border || "#e5e7eb";
-            box.appendChild(label);
+            if(zone.label){
+                const label = document.createElement("span");
+                label.textContent = zone.label || "";
+                label.style.color = zone.text || zone.border || "#e5e7eb";
+                if(zone.labelPosition === "center"){
+                    label.className = "centerLabel";
+                }
+                box.appendChild(label);
+            }
             this.zoneLayer.appendChild(box);
 
         });
@@ -383,7 +394,7 @@ class IndicatorEngine {
             if(x == null || y == null) return;
 
             const el = document.createElement("div");
-            el.className = `indicatorLabel ${label.tone || ""}`;
+            el.className = `indicatorLabel ${label.source || ""} ${label.tone || ""}`;
             el.textContent = label.text;
             el.style.left = `${x}px`;
             el.style.top = `${y}px`;
@@ -462,6 +473,20 @@ class IndicatorEngine {
 
         if(!structure) return;
 
+        this.removeByPrefix("STRUCTURE_");
+        this.structureZones = (structure.zones || []).filter(zone =>
+            zone &&
+            zone.startTime != null &&
+            zone.endTime != null &&
+            Number.isFinite(zone.top) &&
+            Number.isFinite(zone.bottom)
+        ).map(zone=>({
+            ...zone,
+            label:"",
+            labelPosition:"center"
+        }));
+        this.renderZones();
+
         if(this.chartEngine && structure.markers){
             this.chartEngine.setMarkerSource("structure", []);
         }
@@ -488,6 +513,38 @@ class IndicatorEngine {
                 {time:level.endTime || level.time,value:level.price}
             ]);
             this.series["STRUCTURE_"+index]=line;
+        });
+
+        (structure.trendLines || []).forEach((line,index)=>{
+            if(
+                !line ||
+                line.startTime == null ||
+                line.endTime == null ||
+                !Number.isFinite(line.startPrice) ||
+                !Number.isFinite(line.endPrice)
+            ) return;
+            const trendLine = this.chart.addLineSeries({
+                color:line.color || "rgba(20,184,166,0.72)",
+                lineWidth:2,
+                lastValueVisible:false,
+                priceLineVisible:false,
+                crosshairMarkerVisible:false
+            });
+            trendLine.setData([
+                {time:line.startTime,value:line.startPrice},
+                {time:line.endTime,value:line.endPrice}
+            ]);
+            this.series["STRUCTURE_TREND_"+index]=trendLine;
+        });
+
+    }
+
+    removeByPrefix(prefix){
+
+        Object.keys(this.series).forEach(key=>{
+            if(!key.startsWith(prefix)) return;
+            this.chart.removeSeries(this.series[key]);
+            delete this.series[key];
         });
 
     }
