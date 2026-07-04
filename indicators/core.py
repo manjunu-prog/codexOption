@@ -400,6 +400,8 @@ def market_structure(df: pd.DataFrame, lookback: int = 9, liquidity_lookback: in
     swing_highs, swing_lows = _swing_points(df, lookback)
     markers: list[dict] = []
     levels: list[dict] = []
+    zones: list[dict] = []
+    trend_lines: list[dict] = []
     last_state: str | None = None
     last_high: tuple[pd.Timestamp, float] | None = None
     last_low: tuple[pd.Timestamp, float] | None = None
@@ -441,6 +443,27 @@ def market_structure(df: pd.DataFrame, lookback: int = 9, liquidity_lookback: in
                     "color": "#16a34a",
                 }
             )
+            if last_low:
+                start_ts = min(last_low[0], last_high[0])
+                zones.append(
+                    _structure_zone(
+                        label=label,
+                        direction="bullish",
+                        start_time=int(start_ts.timestamp()),
+                        end_time=int(ts.timestamp()),
+                        top=last_high[1],
+                        bottom=last_low[1],
+                    )
+                )
+                trend_lines.append(
+                    {
+                        "startTime": int(last_low[0].timestamp()),
+                        "startPrice": last_low[1],
+                        "endTime": int(ts.timestamp()),
+                        "endPrice": close,
+                        "color": "rgba(20,184,166,0.78)",
+                    }
+                )
         if last_low and not low_broken and close < last_low[1]:
             label = "CHoCH" if last_state in {None, "up"} else "BoS"
             last_state = "down"
@@ -465,12 +488,59 @@ def market_structure(df: pd.DataFrame, lookback: int = 9, liquidity_lookback: in
                     "color": "#dc2626",
                 }
             )
+            if last_high:
+                start_ts = min(last_low[0], last_high[0])
+                zones.append(
+                    _structure_zone(
+                        label=label,
+                        direction="bearish",
+                        start_time=int(start_ts.timestamp()),
+                        end_time=int(ts.timestamp()),
+                        top=last_high[1],
+                        bottom=last_low[1],
+                    )
+                )
+                trend_lines.append(
+                    {
+                        "startTime": int(last_high[0].timestamp()),
+                        "startPrice": last_high[1],
+                        "endTime": int(ts.timestamp()),
+                        "endPrice": close,
+                        "color": "rgba(239,68,68,0.72)",
+                    }
+                )
 
     liquidity_levels, liquidity_markers = _liquidity_sweeps(df, liquidity_lookback) if show_liquidity else ([], [])
     return {
         "markers": (markers + liquidity_markers)[-120:],
         "levels": (levels + liquidity_levels)[-120:],
+        "zones": zones[-30:],
+        "trendLines": trend_lines[-30:],
     }
+
+
+def _structure_zone(
+    label: str,
+    direction: str,
+    start_time: int,
+    end_time: int,
+    top: float,
+    bottom: float,
+) -> dict:
+    bullish = direction == "bullish"
+    return _zone(
+        kind="structure",
+        direction=direction,
+        label=label,
+        start_time=start_time,
+        end_time=end_time,
+        top=top,
+        bottom=bottom,
+        fill="rgba(37,99,235,0.08)" if bullish else "rgba(239,68,68,0.13)",
+        border="rgba(37,99,235,0.76)" if bullish else "rgba(239,68,68,0.62)",
+        text="rgba(20,184,166,0.95)" if bullish else "rgba(239,68,68,0.92)",
+        border_style="solid",
+    )
 
 
 def _liquidity_sweeps(df: pd.DataFrame, lookback: int = 30) -> tuple[list[dict], list[dict]]:
