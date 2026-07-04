@@ -8,6 +8,7 @@ Historical Data Engine
 from datetime import datetime, timedelta
 import pandas as pd
 
+from api.candle_cache import SupabaseCandleCache
 from api.fyers_login import FyersLogin
 
 
@@ -16,6 +17,7 @@ class HistoricalData:
     def __init__(self, client=None, credentials=None):
 
         self.client = client or FyersLogin(credentials=credentials).get_client()
+        self.cache = SupabaseCandleCache()
 
     # =====================================================
     # Generic History Loader
@@ -32,6 +34,11 @@ class HistoricalData:
 
         start = today - timedelta(days=days)
 
+        cached_df = self.cache.get(symbol, timeframe, start, today)
+        fetch_start = start
+        if not cached_df.empty:
+            fetch_start = cached_df.index.max().to_pydatetime() - timedelta(days=1)
+
         payload = {
 
             "symbol": symbol,
@@ -40,7 +47,7 @@ class HistoricalData:
 
             "date_format": "1",
 
-            "range_from": start.strftime("%Y-%m-%d"),
+            "range_from": fetch_start.strftime("%Y-%m-%d"),
 
             "range_to": today.strftime("%Y-%m-%d"),
 
@@ -59,9 +66,13 @@ class HistoricalData:
                 )
             )
 
-        return self._to_dataframe(
-            response["candles"]
-        )
+        fresh_df = self._to_dataframe(response["candles"])
+        self.cache.upsert(symbol, timeframe, fresh_df)
+        self.cache.cleanup(keep_days=4)
+
+        combined = pd.concat([cached_df, fresh_df]) if not cached_df.empty else fresh_df
+        combined = combined[~combined.index.duplicated(keep="last")].sort_index()
+        return combined[combined.index >= pd.Timestamp(start)]
 
     # =====================================================
     # Today's Data

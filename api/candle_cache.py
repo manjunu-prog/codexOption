@@ -1,0 +1,109 @@
+"""Optional Supabase-backed candle cache."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+import os
+from typing import Any
+
+import pandas as pd
+import requests
+
+
+def _secret_value(key: str) -> str:
+    value = os.getenv(key, "")
+    if value:
+        return value
+    try:
+        import streamlit as st
+
+        return st.secrets.get(key, "")
+    except Exception:
+        return ""
+
+
+class SupabaseCandleCache:
+    table = "candles"
+
+    def __init__(self):
+        self.url = _secret_value("SUPABASE_URL").rstrip("/")
+        self.key = _secret_value("SUPABASE_SERVICE_ROLE_KEY") or _secret_value("SUPABASE_ANON_KEY")
+        self.enabled = bool(self.url and self.key)
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {
+            "apikey": self.key,
+            "Authorization": f"Bearer {self.key}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates",
+        }
+
+    def get(self, symbol: str, resolution: str, start: datetime, end: datetime) -> pd.DataFrame:
+        if not self.enabled:
+            return pd.DataFrame()
+
+        params = {
+            "select": "timestamp,open,high,low,close,volume",
+            "symbol": f"eq.{symbol}",
+            "resolution": f"eq.{resolution}",
+            "timestamp": f"gte.{int(start.timestamp())}",
+            "order": "timestamp.asc",
+            "limit": "10000",
+        }
+        response = requests.get(self.endpoint, headers=self.headers, params=params, timeout=12)
+        if response.status_code >= 400:
+            return pd.DataFrame()
+
+        rows: list[dict[str, Any]] = [
+            row for row in response.json() if int(row.get("timestamp", 0)) <= int(end.timestamp())
+        ]
+        if not rows:
+            return pd.DataFrame()
+        return self.to_dataframe(rows)
+
+    def upsert(self, symbol: str, resolution: str, df: pd.DataFrame) -> None:
+        if not self.enabled or df.empty:
+            return
+
+        rows = []
+        for ts, row in df[~df.index.duplicated(keep="last")].sort_index().iterrows():
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "resolution": str(resolution),
+                    "timestamp": int(ts.timestamp()),
+                    "open": float(row.open),
+                    "high": float(row.high),
+                    "low": float(row.low),
+                    "close": float(row.close),
+                    "volume": int(row.volume),
+                }
+            )
+
+        for start in range(0, len(rows), 500):
+            requests.post(self.endpoint, headers=self.headers, json=rows[start : start + 500], timeout=20)
+
+    def cleanup(self, keep_days: int = 4) -> None:
+        if not self.enabled:
+            return
+        cutoff = int((datetime.now() - timedelta(days=keep_days)).timestamp())
+        requests.delete(
+            self.endpoint,
+            headers=self.headers,
+            params={"timestamp": f"lt.{cutoff}"},
+            timeout=12,
+        )
+
+    @property
+    def endpoint(self) -> str:
+        return f"{self.url}/rest/v1/{self.table}"
+
+    @staticmethod
+    def to_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
+        df = pd.DataFrame.from_records(rows)
+        if df.empty:
+            return df
+        df["datetime"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+        df.set_index("datetime", inplace=True)
+        return df[["timestamp", "open", "high", "low", "close", "volume"]].sort_index()
