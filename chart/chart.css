@@ -147,6 +147,74 @@ html,body{
     color:#ef4444;
 }
 
+.indicatorLabel.angle{
+    background:transparent;
+    box-shadow:none;
+    padding:0;
+    font-size:13px;
+    font-weight:700;
+    text-shadow:0 1px 2px rgba(255,255,255,.95);
+}
+
+.indicatorLabel.angle.angleHigh{
+    color:#0f766e;
+    transform:translate(-50%,-190%);
+}
+
+.indicatorLabel.angle.angleLow{
+    color:#831843;
+    transform:translate(-50%,90%);
+}
+
+.indicatorLabel.angle.angleDeviation{
+    color:#111827;
+    transform:translate(18px,-50%);
+    font-size:13px;
+}
+
+.indicatorLabel.angle.anglePivotHigh,
+.indicatorLabel.angle.anglePivotLow{
+    width:26px;
+    height:26px;
+    padding:0;
+    border-radius:50%;
+    transform:translate(-50%,-50%);
+}
+
+.indicatorLabel.angle.anglePivotHigh{
+    background:rgba(45,212,191,.30);
+    border:2px solid rgba(45,212,191,.34);
+}
+
+.indicatorLabel.angle.anglePivotHigh::after{
+    content:"";
+    position:absolute;
+    left:50%;
+    top:50%;
+    width:10px;
+    height:10px;
+    border-radius:50%;
+    transform:translate(-50%,-50%);
+    background:#14b8a6;
+}
+
+.indicatorLabel.angle.anglePivotLow{
+    background:rgba(236,72,153,.25);
+    border:2px solid rgba(236,72,153,.34);
+}
+
+.indicatorLabel.angle.anglePivotLow::after{
+    content:"";
+    position:absolute;
+    left:50%;
+    top:50%;
+    width:10px;
+    height:10px;
+    border-radius:50%;
+    transform:translate(-50%,-50%);
+    background:#be185d;
+}
+
 .zoneBox{
     position:absolute;
     border-width:1px;

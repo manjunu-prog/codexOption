@@ -162,6 +162,72 @@ class IndicatorEngine {
 
     }
 
+    setCPR(data){
+
+        this.removeByPrefix("CPR_");
+        (data && data.levels ? data.levels : []).forEach((level,index)=>{
+            if(
+                !level ||
+                level.startTime == null ||
+                level.endTime == null ||
+                !Number.isFinite(level.price)
+            ) return;
+
+            let line = null;
+            this.withChartViewProtected(()=>{
+                line = this.chart.addLineSeries({
+                    color: level.color || "#64748b",
+                    lineWidth: level.width || 1,
+                    lineStyle: level.label === "P" ? LightweightCharts.LineStyle.Solid : LightweightCharts.LineStyle.Dashed,
+                    lastValueVisible: true,
+                    title: level.label || "",
+                    priceLineVisible: false,
+                    crosshairMarkerVisible: false
+                });
+                line.setData([
+                    {time: level.startTime, value: level.price},
+                    {time: level.endTime, value: level.price}
+                ]);
+            });
+            this.series[`CPR_${index}`] = line;
+        });
+
+    }
+
+    setAngleMarket(data){
+
+        this.removeByPrefix("ANGLE_");
+        (data && data.lines ? data.lines : []).forEach((item,index)=>{
+            if(
+                !item ||
+                item.startTime == null ||
+                item.endTime == null ||
+                !Number.isFinite(item.startPrice) ||
+                !Number.isFinite(item.endPrice)
+            ) return;
+
+            let line = null;
+            this.withChartViewProtected(()=>{
+                line = this.chart.addLineSeries({
+                    color: item.color || "#14b8a6",
+                    lineWidth: item.width || 2,
+                    lineStyle: item.style === "dashed" ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
+                    lastValueVisible: false,
+                    priceLineVisible: false,
+                    crosshairMarkerVisible: false
+                });
+                line.setData([
+                    {time: item.startTime, value: item.startPrice},
+                    {time: item.endTime, value: item.endPrice}
+                ]);
+            });
+            this.series[`ANGLE_${index}`] = line;
+        });
+
+        this.setLabels("angle", data && data.labels ? data.labels : []);
+
+    }
+
     setAlphaTrend(data){
 
         if(!data) return;
