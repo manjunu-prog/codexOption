@@ -211,7 +211,7 @@ class HistoricalData:
 
             candles.append({
 
-                "time": int(row.timestamp) if "timestamp" in clean_df.columns else int(_.timestamp()),
+                "time": int(_.timestamp()),
 
                 "open": float(row.open),
 
@@ -250,7 +250,7 @@ class HistoricalData:
 
             volume.append({
 
-                "time": int(row.timestamp) if "timestamp" in clean_df.columns else int(_.timestamp()),
+                "time": int(_.timestamp()),
 
                 "value": int(row.volume),
 
