@@ -10,7 +10,7 @@ from api.historical import HistoricalData
 from api.option_chain import OptionChain
 from chart.chart import TradingChart
 from config import APP_NAME, FYERS, INDEX_CONFIG, TIMEFRAMES
-from indicators.core import alphatrend, ema, fvg_ifvg_order_blocks, market_structure, volume_delta, vwap
+from indicators.core import angle_market, alphatrend, cpr, ema, fvg_ifvg_order_blocks, market_structure, volume_delta, vwap
 
 st.set_page_config(page_title=APP_NAME, layout="wide")
 
@@ -108,6 +108,14 @@ with st.sidebar:
         ema_periods = st.multiselect("Periods", [9, 20, 50, 100, 200], default=[20])
     with st.sidebar.expander("VWAP", expanded=False):
         show_vwap = st.checkbox("Show VWAP", value=True)
+    with st.sidebar.expander("CPR", expanded=False):
+        show_cpr = st.checkbox("Show CPR", value=False)
+        show_cpr_pivots = st.checkbox("Show R/S levels", value=True)
+    with st.sidebar.expander("Angle Market", expanded=False):
+        show_angle_market = st.checkbox("Show Angle Market", value=False)
+        angle_market_length = st.number_input("Length", min_value=2, max_value=50, value=5)
+        angle_market_angle = st.number_input("Angle", min_value=0.0, max_value=1.0, value=0.1, step=0.01)
+        angle_market_deviation = st.number_input("Deviation", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
     with st.sidebar.expander("AlphaTrend", expanded=True):
         show_alphatrend = st.checkbox("Show AlphaTrend", value=True)
         alphatrend_period = st.number_input("Period", min_value=1, max_value=100, value=14)
@@ -203,6 +211,15 @@ def build_overlays(df: pd.DataFrame) -> dict:
     return {
         "emas": [{"period": period, "data": ema(df, period)} for period in ema_periods],
         "vwap": vwap(df) if show_vwap else None,
+        "cpr": cpr(df, show_pivots=show_cpr_pivots) if show_cpr else None,
+        "angle_market": angle_market(
+            df,
+            length=int(angle_market_length),
+            angle=float(angle_market_angle),
+            deviation_size=float(angle_market_deviation),
+        )
+        if show_angle_market
+        else None,
         "alphatrend": alphatrend(
             df,
             period=int(alphatrend_period),
@@ -318,6 +335,8 @@ def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, di
         volume=HistoricalData.volume_json(chart_df),
         emas=overlays["emas"],
         vwap=overlays["vwap"],
+        cpr=overlays["cpr"],
+        angle_market=overlays["angle_market"],
         alphatrend=overlays["alphatrend"],
         zones=overlays["zones"],
         structure=overlays["structure"],
