@@ -37,6 +37,7 @@ def _supabase_rest_url() -> str:
 
 class SupabaseCandleCache:
     table = "candles"
+    cache_version = "v2"
 
     def __init__(self):
         self.url = _supabase_rest_url()
@@ -58,7 +59,7 @@ class SupabaseCandleCache:
 
         params = {
             "select": "timestamp,open,high,low,close,volume",
-            "symbol": f"eq.{symbol}",
+            "symbol": f"eq.{self.cache_symbol(symbol)}",
             "resolution": f"eq.{resolution}",
             "timestamp": f"gte.{int(start.timestamp())}",
             "order": "timestamp.asc",
@@ -84,11 +85,12 @@ class SupabaseCandleCache:
 
         rows = []
         for ts, row in df[~df.index.duplicated(keep="last")].sort_index().iterrows():
+            timestamp = int(row.timestamp) if "timestamp" in df.columns and pd.notna(row.timestamp) else int(ts.timestamp())
             rows.append(
                 {
-                    "symbol": symbol,
+                    "symbol": self.cache_symbol(symbol),
                     "resolution": str(resolution),
-                    "timestamp": int(ts.timestamp()),
+                    "timestamp": timestamp,
                     "open": float(row.open),
                     "high": float(row.high),
                     "low": float(row.low),
@@ -120,6 +122,9 @@ class SupabaseCandleCache:
     @property
     def endpoint(self) -> str:
         return f"{self.url}/rest/v1/{self.table}"
+
+    def cache_symbol(self, symbol: str) -> str:
+        return f"{self.cache_version}:{symbol}"
 
     @staticmethod
     def to_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:

@@ -71,7 +71,7 @@ class HistoricalData:
         self.cache.cleanup(keep_days=4)
 
         combined = pd.concat([cached_df, fresh_df]) if not cached_df.empty else fresh_df
-        combined = combined[~combined.index.duplicated(keep="last")].sort_index()
+        combined = self._dedupe(combined)
         return combined[combined.index >= pd.Timestamp(start)]
 
     # =====================================================
@@ -182,9 +182,19 @@ class HistoricalData:
 
         )
 
-        df = df[~df.index.duplicated(keep="last")].sort_index()
+        return HistoricalData._dedupe(df)
 
-        return df
+    @staticmethod
+    def _dedupe(df):
+        if df.empty:
+            return df
+        clean = df.copy()
+        if "timestamp" in clean.columns:
+            clean["timestamp"] = pd.to_numeric(clean["timestamp"], errors="coerce").astype("Int64")
+            clean = clean.dropna(subset=["timestamp"])
+            clean = clean.drop_duplicates(subset=["timestamp"], keep="last")
+        clean = clean[~clean.index.duplicated(keep="last")].sort_index()
+        return clean
 
     # =====================================================
     # Lightweight Chart JSON
@@ -201,7 +211,7 @@ class HistoricalData:
 
             candles.append({
 
-                "time": int(_.timestamp()),
+                "time": int(row.timestamp) if "timestamp" in clean_df.columns else int(_.timestamp()),
 
                 "open": float(row.open),
 
@@ -240,7 +250,7 @@ class HistoricalData:
 
             volume.append({
 
-                "time": int(_.timestamp()),
+                "time": int(row.timestamp) if "timestamp" in clean_df.columns else int(_.timestamp()),
 
                 "value": int(row.volume),
 
