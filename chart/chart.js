@@ -20,6 +20,7 @@ class ChartEngine {
         this.storageKey = "OptionTerminal:v2:chart";
         this.pendingView = null;
         this.suspendViewStore = false;
+        this.suspendViewStoreUntil = 0;
 
         this.init();
 
@@ -160,14 +161,14 @@ class ChartEngine {
         });
 
         this.chart.timeScale().subscribeVisibleLogicalRangeChange((range)=>{
-            if(this.suspendViewStore || !range || !this.storageKey) return;
+            if(this.isViewStoreSuspended() || !range || !this.storageKey) return;
             this.storeView({time: range});
         });
 
         const priceScale = this.chart.priceScale("right");
         if(priceScale && priceScale.subscribeVisiblePriceRangeChange){
             priceScale.subscribeVisiblePriceRangeChange((range)=>{
-                if(this.suspendViewStore || !range || !this.storageKey) return;
+                if(this.isViewStoreSuspended() || !range || !this.storageKey) return;
                 this.storeView({price: {from: range.from, to: range.to}});
             });
         }
@@ -240,6 +241,7 @@ class ChartEngine {
 
         this.lastCandles = cleanData;
         const view = this.captureView() || this.readStoredView();
+        this.holdViewStore(900);
         this.withSuspendedViewStore(()=>{
             this.candleSeries.setData(cleanData);
         });
@@ -250,6 +252,7 @@ class ChartEngine {
             setTimeout(()=>this.applyView(this.pendingView), 0);
             setTimeout(()=>this.applyView(this.pendingView), 120);
             setTimeout(()=>this.applyView(this.pendingView), 320);
+            setTimeout(()=>this.applyView(this.pendingView), 700);
         }
 
     }
@@ -296,7 +299,7 @@ class ChartEngine {
 
     storeView(view){
 
-        if(this.suspendViewStore) return;
+        if(this.isViewStoreSuspended()) return;
         const current = this.readStoredView() || {};
         const payload = JSON.stringify({
             time: view.time || current.time,
@@ -383,6 +386,18 @@ class ChartEngine {
 
     }
 
+    holdViewStore(ms=600){
+
+        this.suspendViewStoreUntil = Math.max(this.suspendViewStoreUntil || 0, Date.now() + ms);
+
+    }
+
+    isViewStoreSuspended(){
+
+        return this.suspendViewStore || Date.now() < (this.suspendViewStoreUntil || 0);
+
+    }
+
     setVolume(data){
 
         const cleanData = (data || []).filter(item =>
@@ -391,7 +406,9 @@ class ChartEngine {
             Number.isFinite(item.value)
         );
 
-        this.volumeSeries.setData(cleanData);
+        this.withSuspendedViewStore(()=>{
+            this.volumeSeries.setData(cleanData);
+        });
 
     }
 
@@ -418,7 +435,9 @@ class ChartEngine {
         this.markerSources[name || "default"] = markers || [];
         const merged = Object.values(this.markerSources).flat();
         merged.sort((a,b)=>(Number(a.time) || 0) - (Number(b.time) || 0));
-        this.candleSeries.setMarkers(merged);
+        this.withSuspendedViewStore(()=>{
+            this.candleSeries.setMarkers(merged);
+        });
 
     }
 

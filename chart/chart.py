@@ -47,6 +47,7 @@ class TradingChart:
 window.addEventListener("load", function(){{
     if(window.ChartEngine){{
         window.ChartEngine.setMeta({json.dumps(symbol)}, {json.dumps(timeframe)}, {json.dumps(chart_id or symbol)});
+        if(window.ChartEngine.holdViewStore) window.ChartEngine.holdViewStore(1400);
         window.ChartEngine.setCandles({json.dumps(candles)});
         window.ChartEngine.setVolume({json.dumps(volume)});
     }}
@@ -60,6 +61,8 @@ window.addEventListener("load", function(){{
         if(window.ChartEngine && window.ChartEngine.preserveView){{
             window.ChartEngine.preserveView();
             setTimeout(()=>window.ChartEngine.preserveView(), 150);
+            setTimeout(()=>window.ChartEngine.preserveView(), 450);
+            setTimeout(()=>window.ChartEngine.preserveView(), 900);
         }}
     }}
 }});

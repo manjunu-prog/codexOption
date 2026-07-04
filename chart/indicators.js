@@ -22,11 +22,15 @@ class IndicatorEngine {
         this.labels = [];
         this.zoneWatchFrame = null;
         this.alphaTrendFrame = null;
+        this.overlayTrackingFrame = null;
         this.lastZoneSignature = "";
         this.lastAlphaTrendSignature = "";
         this.alphaTrendLayer = this.createAlphaTrendLayer();
         this.zoneLayer = this.createZoneLayer();
         this.labelLayer = this.createLabelLayer();
+        this.chart.timeScale().subscribeVisibleLogicalRangeChange(()=>{
+            this.scheduleOverlayRender();
+        });
         this.chart.timeScale().subscribeVisibleTimeRangeChange(()=>{
             this.renderAlphaTrendFill();
             this.renderZones();
@@ -38,15 +42,14 @@ class IndicatorEngine {
             this.renderLabels();
         });
         this.chartEngine.container.addEventListener("pointermove",()=>{
-            this.scheduleAlphaTrendRender();
-            this.scheduleZoneRender();
-            this.scheduleLabelRender();
+            this.scheduleOverlayRender();
         });
         this.chartEngine.container.addEventListener("wheel",()=>{
-            this.scheduleAlphaTrendRender();
-            this.scheduleZoneRender();
-            this.scheduleLabelRender();
+            this.scheduleOverlayRender();
         });
+        this.chartEngine.container.addEventListener("pointerdown",()=>this.startOverlayTracking());
+        this.chartEngine.container.addEventListener("pointerup",()=>this.stopOverlayTracking());
+        this.chartEngine.container.addEventListener("pointercancel",()=>this.stopOverlayTracking());
 
     }
 
@@ -86,7 +89,7 @@ class IndicatorEngine {
     addLine(name,data,color="#FFD54F",width=2){
 
         if(this.series[name]){
-            this.chart.removeSeries(this.series[name]);
+            this.withChartViewProtected(()=>this.chart.removeSeries(this.series[name]));
         }
 
         const cleanData = (data || []).filter(item =>
@@ -97,15 +100,17 @@ class IndicatorEngine {
 
         if(cleanData.length === 0) return;
 
-        const line = this.chart.addLineSeries({
-            color:color,
-            lineWidth:width,
-            lastValueVisible:true,
-            crosshairMarkerVisible:false,
-            priceLineVisible:false
+        let line = null;
+        this.withChartViewProtected(()=>{
+            line = this.chart.addLineSeries({
+                color:color,
+                lineWidth:width,
+                lastValueVisible:true,
+                crosshairMarkerVisible:false,
+                priceLineVisible:false
+            });
+            line.setData(cleanData);
         });
-
-        line.setData(cleanData);
 
         this.series[name]=line;
 
@@ -162,7 +167,7 @@ class IndicatorEngine {
         if(!data) return;
 
         if(this.series.AlphaTrend_Body){
-            this.chart.removeSeries(this.series.AlphaTrend_Body);
+            this.withChartViewProtected(()=>this.chart.removeSeries(this.series.AlphaTrend_Body));
             delete this.series.AlphaTrend_Body;
         }
 
@@ -238,9 +243,7 @@ class IndicatorEngine {
 
         if(!this.series[name]) return;
 
-        this.chart.removeSeries(
-            this.series[name]
-        );
+            this.withChartViewProtected(()=>this.chart.removeSeries(this.series[name]));
 
         delete this.series[name];
 
@@ -253,9 +256,7 @@ class IndicatorEngine {
 
         Object.keys(this.series).forEach(key=>{
 
-            this.chart.removeSeries(
-                this.series[key]
-            );
+            this.withChartViewProtected(()=>this.chart.removeSeries(this.series[key]));
 
         });
 
@@ -292,19 +293,24 @@ class IndicatorEngine {
             const color = box.direction === "bullish"
                 ? "rgba(34,197,94,0.85)"
                 : "rgba(239,68,68,0.85)";
-            const line = this.chart.addLineSeries({
-                color,
-                lineWidth:2,
-                lineStyle:LightweightCharts.LineStyle.Dotted,
-                lastValueVisible:false,
-                priceLineVisible:false,
-                crosshairMarkerVisible:false
+            let line = null;
+            this.withChartViewProtected(()=>{
+                line = this.chart.addLineSeries({
+                    color,
+                    lineWidth:2,
+                    lineStyle:LightweightCharts.LineStyle.Dotted,
+                    lastValueVisible:false,
+                    priceLineVisible:false,
+                    crosshairMarkerVisible:false
+                });
             });
             const last = (this.chartEngine.lastCandles || []).slice(-1)[0];
-            line.setData([
-                {time:box.time,value:mid},
-                {time:last ? last.time : box.time,value:mid}
-            ]);
+            this.withChartViewProtected(()=>{
+                line.setData([
+                    {time:box.time,value:mid},
+                    {time:last ? last.time : box.time,value:mid}
+                ]);
+            });
             this.series["FVG_"+index]=line;
         });
 
@@ -322,6 +328,50 @@ class IndicatorEngine {
 
         this.renderZones();
         setTimeout(()=>this.renderZones(), 100);
+
+    }
+
+    scheduleOverlayRender(){
+
+        this.scheduleAlphaTrendRender();
+        this.scheduleZoneRender();
+        this.scheduleLabelRender();
+
+    }
+
+    startOverlayTracking(){
+
+        if(this.overlayTrackingFrame != null) return;
+        const tick = ()=>{
+            this.renderAlphaTrendFill(false);
+            this.renderZones(false);
+            this.renderLabels();
+            this.overlayTrackingFrame = requestAnimationFrame(tick);
+        };
+        this.overlayTrackingFrame = requestAnimationFrame(tick);
+
+    }
+
+    stopOverlayTracking(){
+
+        if(this.overlayTrackingFrame == null) return;
+        cancelAnimationFrame(this.overlayTrackingFrame);
+        this.overlayTrackingFrame = null;
+        this.renderAlphaTrendFill();
+        this.renderZones();
+        this.renderLabels();
+
+    }
+
+    withChartViewProtected(callback){
+
+        if(this.chartEngine && this.chartEngine.holdViewStore){
+            this.chartEngine.holdViewStore(900);
+        }
+        if(this.chartEngine && this.chartEngine.withSuspendedViewStore){
+            return this.chartEngine.withSuspendedViewStore(callback);
+        }
+        return callback();
 
     }
 
@@ -621,18 +671,21 @@ class IndicatorEngine {
 
         (structure.levels || []).forEach((level,index)=>{
             if(!level || level.time == null || !Number.isFinite(level.price)) return;
-            const line = this.chart.addLineSeries({
-                color:level.color || "#9ca3af",
-                lineWidth:2,
-                lineStyle:level.style === "dashed" ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
-                lastValueVisible:false,
-                priceLineVisible:false,
-                crosshairMarkerVisible:false
+            let line = null;
+            this.withChartViewProtected(()=>{
+                line = this.chart.addLineSeries({
+                    color:level.color || "#9ca3af",
+                    lineWidth:2,
+                    lineStyle:level.style === "dashed" ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
+                    lastValueVisible:false,
+                    priceLineVisible:false,
+                    crosshairMarkerVisible:false
+                });
+                line.setData([
+                    {time:level.startTime || level.time,value:level.price},
+                    {time:level.endTime || level.time,value:level.price}
+                ]);
             });
-            line.setData([
-                {time:level.startTime || level.time,value:level.price},
-                {time:level.endTime || level.time,value:level.price}
-            ]);
             this.series["STRUCTURE_"+index]=line;
         });
 
@@ -644,17 +697,20 @@ class IndicatorEngine {
                 !Number.isFinite(line.startPrice) ||
                 !Number.isFinite(line.endPrice)
             ) return;
-            const trendLine = this.chart.addLineSeries({
-                color:line.color || "rgba(20,184,166,0.72)",
-                lineWidth:2,
-                lastValueVisible:false,
-                priceLineVisible:false,
-                crosshairMarkerVisible:false
+            let trendLine = null;
+            this.withChartViewProtected(()=>{
+                trendLine = this.chart.addLineSeries({
+                    color:line.color || "rgba(20,184,166,0.72)",
+                    lineWidth:2,
+                    lastValueVisible:false,
+                    priceLineVisible:false,
+                    crosshairMarkerVisible:false
+                });
+                trendLine.setData([
+                    {time:line.startTime,value:line.startPrice},
+                    {time:line.endTime,value:line.endPrice}
+                ]);
             });
-            trendLine.setData([
-                {time:line.startTime,value:line.startPrice},
-                {time:line.endTime,value:line.endPrice}
-            ]);
             this.series["STRUCTURE_TREND_"+index]=trendLine;
         });
 
@@ -664,7 +720,7 @@ class IndicatorEngine {
 
         Object.keys(this.series).forEach(key=>{
             if(!key.startsWith(prefix)) return;
-            this.chart.removeSeries(this.series[key]);
+            this.withChartViewProtected(()=>this.chart.removeSeries(this.series[key]));
             delete this.series[key];
         });
 
