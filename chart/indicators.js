@@ -165,7 +165,8 @@ class IndicatorEngine {
     setCPR(data){
 
         this.removeByPrefix("CPR_");
-        (data && data.levels ? data.levels : []).forEach((level,index)=>{
+        const levels = data && data.levels ? data.levels : [];
+        levels.forEach((level,index)=>{
             if(
                 !level ||
                 level.startTime == null ||
@@ -191,6 +192,17 @@ class IndicatorEngine {
             });
             this.series[`CPR_${index}`] = line;
         });
+
+        this.setLabels("cpr", levels.map(level=>({
+            time: level.endTime,
+            price: level.price,
+            text: level.label,
+            tone: String(level.label || "").startsWith("R")
+                ? "cprResistance"
+                : String(level.label || "").startsWith("S")
+                    ? "cprSupport"
+                    : "cprCentral"
+        })));
 
     }
 
