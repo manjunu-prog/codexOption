@@ -23,6 +23,237 @@ def vwap(df: pd.DataFrame) -> list[dict]:
     return _clean_line(values)
 
 
+def cpr(df: pd.DataFrame, show_pivots: bool = True) -> dict[str, list[dict]]:
+    clean = df[~df.index.duplicated(keep="last")].sort_index()
+    if clean.empty:
+        return {"levels": []}
+
+    dates = pd.Series(clean.index.date, index=clean.index)
+    unique_dates = list(dict.fromkeys(dates.tolist()))
+    if len(unique_dates) < 2:
+        return {"levels": []}
+
+    current_date = unique_dates[-1]
+    previous_date = unique_dates[-2]
+    previous = clean[dates == previous_date]
+    current = clean[dates == current_date]
+    if previous.empty or current.empty:
+        return {"levels": []}
+
+    previous_high = float(pd.to_numeric(previous["high"], errors="coerce").max())
+    previous_low = float(pd.to_numeric(previous["low"], errors="coerce").min())
+    previous_close = float(pd.to_numeric(previous["close"], errors="coerce").iloc[-1])
+    if not all(pd.notna(value) for value in [previous_high, previous_low, previous_close]):
+        return {"levels": []}
+
+    pivot = (previous_high + previous_low + previous_close) / 3
+    bc = (previous_high + previous_low) / 2
+    tc = (pivot * 2) - bc
+    top_cpr = max(tc, bc)
+    bottom_cpr = min(tc, bc)
+    start_time = int(current.index[0].timestamp())
+    end_time = int(current.index[-1].timestamp())
+
+    levels = [
+        _cpr_level("TC", top_cpr, start_time, end_time, "#7c3aed", 2),
+        _cpr_level("P", pivot, start_time, end_time, "#f59e0b", 2),
+        _cpr_level("BC", bottom_cpr, start_time, end_time, "#7c3aed", 2),
+    ]
+
+    if show_pivots:
+        r1 = (2 * pivot) - previous_low
+        s1 = (2 * pivot) - previous_high
+        r2 = pivot + (previous_high - previous_low)
+        s2 = pivot - (previous_high - previous_low)
+        levels.extend(
+            [
+                _cpr_level("R1", r1, start_time, end_time, "#ef4444", 1),
+                _cpr_level("R2", r2, start_time, end_time, "#ef4444", 1),
+                _cpr_level("S1", s1, start_time, end_time, "#14a889", 1),
+                _cpr_level("S2", s2, start_time, end_time, "#14a889", 1),
+            ]
+        )
+
+    return {"levels": levels}
+
+
+def _cpr_level(label: str, price: float, start_time: int, end_time: int, color: str, width: int) -> dict:
+    return {
+        "label": label,
+        "price": float(price),
+        "startTime": int(start_time),
+        "endTime": int(end_time),
+        "color": color,
+        "width": int(width),
+    }
+
+
+def angle_market(
+    df: pd.DataFrame,
+    length: int = 5,
+    angle: float = 0.1,
+    deviation_size: float = 1.0,
+) -> dict[str, list[dict]]:
+    clean = df[~df.index.duplicated(keep="last")].sort_index()
+    if len(clean) < max(length * 2 + 5, 20):
+        return {"lines": [], "labels": []}
+
+    rows = clean.reset_index().rename(columns={clean.reset_index().columns[0]: "datetime"})
+    atr = _atr(clean, 200).reset_index(drop=True)
+    lines: list[dict] = []
+    labels: list[dict] = []
+    highs: list[dict] = []
+    lows: list[dict] = []
+    ph_val: float | None = None
+    ph_point: dict | None = None
+    pl_val: float | None = None
+    pl_point: dict | None = None
+    count_up = 0
+    count_down = 0
+    latest_deviation: list[dict] = []
+
+    for i, row in rows.iterrows():
+        time_value = int(row["datetime"].timestamp())
+        high = float(row["high"])
+        low = float(row["low"])
+        step = float(atr.iloc[min(i, len(atr) - 1)] or 0) * float(angle)
+        deviation = float(atr.iloc[min(i, len(atr) - 1)] or 0) * float(deviation_size)
+
+        pivot_index = i - length
+        if pivot_index >= length and i >= length * 2:
+            window = rows.iloc[pivot_index - length : pivot_index + length + 1]
+            pivot = rows.iloc[pivot_index]
+            pivot_time = int(pivot["datetime"].timestamp())
+            pivot_high = float(pivot["high"])
+            pivot_low = float(pivot["low"])
+
+            if pivot_high == float(window["high"].max()):
+                structure = "HH" if highs and pivot_high > highs[-1]["price"] else "LH" if highs else "H"
+                point = {"index": pivot_index, "time": pivot_time, "price": pivot_high, "structure": structure}
+                highs.append(point)
+                ph_val = pivot_high
+                ph_point = point
+                labels.append(_angle_label(point, "anglePivotHigh", "#14b8a6"))
+
+            if pivot_low == float(window["low"].min()):
+                structure = "HL" if lows and pivot_low > lows[-1]["price"] else "LL" if lows else "L"
+                point = {"index": pivot_index, "time": pivot_time, "price": pivot_low, "structure": structure}
+                lows.append(point)
+                pl_val = pivot_low
+                pl_point = point
+                labels.append(_angle_label(point, "anglePivotLow", "#be185d"))
+
+        if ph_val is not None and ph_point is not None:
+            ph_val -= step
+            if high > ph_val:
+                count_up += 1
+                count_down = 0
+                lines.append(
+                    {
+                        "startTime": ph_point["time"],
+                        "startPrice": ph_point["price"],
+                        "endTime": time_value,
+                        "endPrice": ph_val,
+                        "color": "#14b8a6",
+                        "width": 2,
+                    }
+                )
+                labels.append(
+                    {
+                        "time": ph_point["time"],
+                        "price": ph_point["price"],
+                        "text": f"{ph_point['structure']} {count_up}",
+                        "tone": "angleHigh",
+                    }
+                )
+                latest_deviation = _angle_deviation_lines(time_value, ph_val, deviation, "up")
+                ph_val = None
+                ph_point = None
+
+        if pl_val is not None and pl_point is not None:
+            pl_val += step
+            if low < pl_val:
+                count_down += 1
+                count_up = 0
+                lines.append(
+                    {
+                        "startTime": pl_point["time"],
+                        "startPrice": pl_point["price"],
+                        "endTime": time_value,
+                        "endPrice": pl_val,
+                        "color": "#be185d",
+                        "width": 2,
+                    }
+                )
+                labels.append(
+                    {
+                        "time": pl_point["time"],
+                        "price": pl_point["price"],
+                        "text": f"{pl_point['structure']} {count_down}",
+                        "tone": "angleLow",
+                    }
+                )
+                latest_deviation = _angle_deviation_lines(time_value, pl_val, deviation, "down")
+                pl_val = None
+                pl_point = None
+
+    last_time = int(clean.index[-1].timestamp())
+    future_time = last_time + (_infer_time_step([int(ts.timestamp()) for ts in clean.index]) * 5)
+    for item in latest_deviation:
+        item["endTime"] = future_time
+        item["labelTime"] = future_time
+
+    return {
+        "lines": lines[-80:] + latest_deviation,
+        "labels": labels[-160:] + _angle_deviation_labels(latest_deviation),
+    }
+
+
+def _angle_label(point: dict, tone: str, color: str) -> dict:
+    return {
+        "time": point["time"],
+        "price": point["price"],
+        "text": "",
+        "tone": tone,
+        "color": color,
+    }
+
+
+def _angle_deviation_lines(start_time: int, base: float, deviation: float, direction: str) -> list[dict]:
+    if deviation <= 0:
+        return []
+    sign = 1 if direction == "up" else -1
+    items = []
+    for multiple in [1, 2, 3]:
+        price = base + (deviation * multiple * sign)
+        items.append(
+            {
+                "startTime": start_time,
+                "endTime": start_time,
+                "startPrice": price,
+                "endPrice": price,
+                "color": "#111827",
+                "width": 1,
+                "style": "dashed" if multiple == 2 else "solid",
+                "deviationLabel": f"{'+' if sign > 0 else '-'}{multiple}",
+            }
+        )
+    return items
+
+
+def _angle_deviation_labels(lines: list[dict]) -> list[dict]:
+    return [
+        {
+            "time": item.get("labelTime", item["endTime"]),
+            "price": item["endPrice"],
+            "text": item["deviationLabel"],
+            "tone": "angleDeviation",
+        }
+        for item in lines
+        if item.get("deviationLabel")
+    ]
+
+
 def alphatrend(
     df: pd.DataFrame,
     period: int = 14,
