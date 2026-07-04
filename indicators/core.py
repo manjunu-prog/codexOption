@@ -55,9 +55,9 @@ def cpr(df: pd.DataFrame, show_pivots: bool = True) -> dict[str, list[dict]]:
     end_time = int(current.index[-1].timestamp())
 
     levels = [
-        _cpr_level("TC", top_cpr, start_time, end_time, "#7c3aed", 2),
-        _cpr_level("P", pivot, start_time, end_time, "#f59e0b", 2),
-        _cpr_level("BC", bottom_cpr, start_time, end_time, "#7c3aed", 2),
+        _cpr_level("TC", top_cpr, start_time, end_time, "#7c3aed", 3),
+        _cpr_level("P", pivot, start_time, end_time, "#f59e0b", 3),
+        _cpr_level("BC", bottom_cpr, start_time, end_time, "#7c3aed", 3),
     ]
 
     if show_pivots:
@@ -65,12 +65,16 @@ def cpr(df: pd.DataFrame, show_pivots: bool = True) -> dict[str, list[dict]]:
         s1 = (2 * pivot) - previous_high
         r2 = pivot + (previous_high - previous_low)
         s2 = pivot - (previous_high - previous_low)
+        r3 = previous_high + (2 * (pivot - previous_low))
+        s3 = previous_low - (2 * (previous_high - pivot))
         levels.extend(
             [
-                _cpr_level("R1", r1, start_time, end_time, "#ef4444", 1),
-                _cpr_level("R2", r2, start_time, end_time, "#ef4444", 1),
-                _cpr_level("S1", s1, start_time, end_time, "#14a889", 1),
-                _cpr_level("S2", s2, start_time, end_time, "#14a889", 1),
+                _cpr_level("R1", r1, start_time, end_time, "#ef4444", 2),
+                _cpr_level("R2", r2, start_time, end_time, "#ef4444", 2),
+                _cpr_level("R3", r3, start_time, end_time, "#ef4444", 2),
+                _cpr_level("S1", s1, start_time, end_time, "#14a889", 2),
+                _cpr_level("S2", s2, start_time, end_time, "#14a889", 2),
+                _cpr_level("S3", s3, start_time, end_time, "#14a889", 2),
             ]
         )
 
@@ -205,7 +209,7 @@ def angle_market(
 
     return {
         "lines": lines[-80:] + latest_deviation,
-        "labels": labels[-160:] + _angle_deviation_labels(latest_deviation),
+        "labels": labels[-160:],
     }
 
 
@@ -239,19 +243,6 @@ def _angle_deviation_lines(start_time: int, base: float, deviation: float, direc
             }
         )
     return items
-
-
-def _angle_deviation_labels(lines: list[dict]) -> list[dict]:
-    return [
-        {
-            "time": item.get("labelTime", item["endTime"]),
-            "price": item["endPrice"],
-            "text": item["deviationLabel"],
-            "tone": "angleDeviation",
-        }
-        for item in lines
-        if item.get("deviationLabel")
-    ]
 
 
 def alphatrend(
