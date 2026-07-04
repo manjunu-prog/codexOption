@@ -397,150 +397,223 @@ def _swing_points(df: pd.DataFrame, lookback: int = 2) -> tuple[list[tuple[pd.Ti
 
 
 def market_structure(df: pd.DataFrame, lookback: int = 9, liquidity_lookback: int = 30, show_liquidity: bool = True) -> dict[str, list[dict]]:
-    swing_highs, swing_lows = _swing_points(df, lookback)
+    clean = df[~df.index.duplicated(keep="last")].sort_index()
+    rows = clean.reset_index()
+    rows = rows.rename(columns={rows.columns[0]: "datetime"})
+    if len(rows) < max(lookback * 2, 5):
+        liquidity_levels, liquidity_markers = _liquidity_sweeps(clean, liquidity_lookback) if show_liquidity else ([], [])
+        return {"markers": liquidity_markers, "levels": liquidity_levels, "zones": [], "trendLines": []}
+
+    atr = _atr(clean, 14).reset_index(drop=True)
     markers: list[dict] = []
     levels: list[dict] = []
-    zones: list[dict] = []
-    trend_lines: list[dict] = []
+    high_points: list[dict] = []
+    low_points: list[dict] = []
+    bullish_orderblocks: list[dict] = []
+    bearish_orderblocks: list[dict] = []
+    trend = 1
+    draw_up = False
+    draw_down = False
     last_state: str | None = None
-    last_high: tuple[pd.Timestamp, float] | None = None
-    last_low: tuple[pd.Timestamp, float] | None = None
-    high_broken = False
-    low_broken = False
-    swing_high_map = {point[0]: point for point in swing_highs}
-    swing_low_map = {point[0]: point for point in swing_lows}
 
-    for ts, row in df.iterrows():
+    for i, row in rows.iterrows():
+        ts = row["datetime"]
+        time_value = int(ts.timestamp())
+        high = float(row["high"])
+        low = float(row["low"])
         close = float(row["close"])
-        if ts in swing_high_map:
-            last_high = swing_high_map[ts]
-            high_broken = False
-        if ts in swing_low_map:
-            last_low = swing_low_map[ts]
-            low_broken = False
 
-        if last_high and not high_broken and close > last_high[1]:
-            label = "CHoCH" if last_state in {None, "down"} else "BoS"
-            last_state = "up"
-            high_broken = True
-            markers.append(
-                {
-                    "time": int(ts.timestamp()),
-                    "position": "aboveBar",
-                    "color": "#16a34a",
-                    "shape": "arrowUp",
-                    "text": f"{label} up",
-                }
-            )
-            levels.append(
-                {
-                    "startTime": int(last_high[0].timestamp()),
-                    "endTime": int(ts.timestamp()),
-                    "labelTime": int((last_high[0].timestamp() + ts.timestamp()) / 2),
-                    "time": int(ts.timestamp()),
-                    "price": last_high[1],
-                    "label": label,
-                    "color": "#16a34a",
-                }
-            )
-            if last_low:
-                start_ts = min(last_low[0], last_high[0])
-                zones.append(
-                    _structure_zone(
-                        label=label,
-                        direction="bullish",
-                        start_time=int(start_ts.timestamp()),
-                        end_time=int(ts.timestamp()),
-                        top=last_high[1],
-                        bottom=last_low[1],
-                    )
-                )
-                trend_lines.append(
-                    {
-                        "startTime": int(last_low[0].timestamp()),
-                        "startPrice": last_low[1],
-                        "endTime": int(ts.timestamp()),
-                        "endPrice": close,
-                        "color": "rgba(20,184,166,0.78)",
-                    }
-                )
-        if last_low and not low_broken and close < last_low[1]:
-            label = "CHoCH" if last_state in {None, "up"} else "BoS"
-            last_state = "down"
-            low_broken = True
-            markers.append(
-                {
-                    "time": int(ts.timestamp()),
-                    "position": "belowBar",
-                    "color": "#dc2626",
-                    "shape": "arrowDown",
-                    "text": f"{label} down",
-                }
-            )
-            levels.append(
-                {
-                    "startTime": int(last_low[0].timestamp()),
-                    "endTime": int(ts.timestamp()),
-                    "labelTime": int((last_low[0].timestamp() + ts.timestamp()) / 2),
-                    "time": int(ts.timestamp()),
-                    "price": last_low[1],
-                    "label": label,
-                    "color": "#dc2626",
-                }
-            )
-            if last_high:
-                start_ts = min(last_low[0], last_high[0])
-                zones.append(
-                    _structure_zone(
-                        label=label,
-                        direction="bearish",
-                        start_time=int(start_ts.timestamp()),
-                        end_time=int(ts.timestamp()),
-                        top=last_high[1],
-                        bottom=last_low[1],
-                    )
-                )
-                trend_lines.append(
-                    {
-                        "startTime": int(last_high[0].timestamp()),
-                        "startPrice": last_high[1],
-                        "endTime": int(ts.timestamp()),
-                        "endPrice": close,
-                        "color": "rgba(239,68,68,0.72)",
-                    }
-                )
+        if i >= lookback:
+            pivot_index = i - lookback
+            pivot = rows.iloc[pivot_index]
+            recent = rows.iloc[max(0, i - lookback + 1) : i + 1]
+            to_up = float(pivot["high"]) >= float(recent["high"].max())
+            to_down = float(pivot["low"]) <= float(recent["low"].min())
+        else:
+            pivot_index = -1
+            pivot = None
+            to_up = False
+            to_down = False
 
-    liquidity_levels, liquidity_markers = _liquidity_sweeps(df, liquidity_lookback) if show_liquidity else ([], [])
+        previous_trend = trend
+        if trend == 1 and to_down:
+            trend = -1
+        elif trend == -1 and to_up:
+            trend = 1
+
+        if pivot is not None and trend != previous_trend and trend == 1:
+            high_points.append(
+                {
+                    "index": pivot_index,
+                    "time": int(pivot["datetime"].timestamp()),
+                    "price": float(pivot["high"]),
+                }
+            )
+            draw_up = False
+
+        if pivot is not None and trend != previous_trend and trend == -1:
+            low_points.append(
+                {
+                    "index": pivot_index,
+                    "time": int(pivot["datetime"].timestamp()),
+                    "price": float(pivot["low"]),
+                }
+            )
+            draw_down = False
+
+        for block in list(bullish_orderblocks):
+            block["endTime"] = time_value
+            if close < block["value"]:
+                bullish_orderblocks.remove(block)
+        for block in list(bearish_orderblocks):
+            block["endTime"] = time_value
+            if close > block["value"]:
+                bearish_orderblocks.remove(block)
+
+        if len(low_points) > 1 and not draw_down:
+            last_low = low_points[-1]
+            if close < last_low["price"]:
+                label = "CHoCH" if last_state in {None, "up"} else "BoS"
+                levels.append(_structure_level(last_low, time_value, label, "#ef4444"))
+                draw_down = True
+                last_state = "down"
+                block = _bearish_pa_orderblock(rows, atr, int(last_low["index"]), i, time_value)
+                if block:
+                    bearish_orderblocks.append(block)
+                    bearish_orderblocks = bearish_orderblocks[-20:]
+
+        if len(high_points) > 1 and not draw_up:
+            last_high = high_points[-1]
+            if close > last_high["price"]:
+                label = "CHoCH" if last_state in {None, "down"} else "BoS"
+                levels.append(_structure_level(last_high, time_value, label, "#14a889"))
+                draw_up = True
+                last_state = "up"
+                block = _bullish_pa_orderblock(rows, atr, int(last_high["index"]), i, time_value)
+                if block:
+                    bullish_orderblocks.append(block)
+                    bullish_orderblocks = bullish_orderblocks[-20:]
+
+    liquidity_levels, liquidity_markers = _liquidity_sweeps(clean, liquidity_lookback) if show_liquidity else ([], [])
+    zones = bullish_orderblocks[-2:] + bearish_orderblocks[-2:]
     return {
-        "markers": (markers + liquidity_markers)[-120:],
+        "markers": liquidity_markers[-60:],
         "levels": (levels + liquidity_levels)[-120:],
-        "zones": zones[-30:],
-        "trendLines": trend_lines[-30:],
+        "zones": zones,
+        "trendLines": _pa_trend_lines(clean, 20),
     }
 
 
-def _structure_zone(
-    label: str,
-    direction: str,
-    start_time: int,
-    end_time: int,
-    top: float,
-    bottom: float,
-) -> dict:
-    bullish = direction == "bullish"
+def _structure_level(point: dict, end_time: int, label: str, color: str) -> dict:
+    return {
+        "startTime": int(point["time"]),
+        "endTime": int(end_time),
+        "labelTime": int((int(point["time"]) + int(end_time)) / 2),
+        "time": int(end_time),
+        "price": float(point["price"]),
+        "label": label,
+        "color": color,
+        "style": "solid",
+    }
+
+
+def _atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    high = pd.to_numeric(df["high"], errors="coerce")
+    low = pd.to_numeric(df["low"], errors="coerce")
+    close = pd.to_numeric(df["close"], errors="coerce")
+    previous_close = close.shift(1)
+    true_range = pd.concat(
+        [(high - low), (high - previous_close).abs(), (low - previous_close).abs()],
+        axis=1,
+    ).max(axis=1)
+    return true_range.ewm(alpha=1 / period, adjust=False, min_periods=1).mean()
+
+
+def _bearish_pa_orderblock(rows: pd.DataFrame, atr: pd.Series, start_index: int, end_index: int, end_time: int) -> dict | None:
+    if start_index < 0 or end_index <= start_index:
+        return None
+    window = rows.iloc[start_index : end_index + 1]
+    if window.empty:
+        return None
+    max_pos = int(window["high"].astype(float).idxmax())
+    value = float(rows.iloc[max_pos]["high"])
+    height = float(atr.iloc[min(max_pos, len(atr) - 1)] or 0)
+    if height <= 0:
+        height = max(value * 0.0005, 1.0)
     return _zone(
-        kind="structure",
-        direction=direction,
-        label=label,
-        start_time=start_time,
+        kind="pa-ob",
+        direction="bearish",
+        label="",
+        start_time=int(rows.iloc[max_pos]["datetime"].timestamp()),
         end_time=end_time,
-        top=top,
-        bottom=bottom,
-        fill="rgba(37,99,235,0.08)" if bullish else "rgba(239,68,68,0.13)",
-        border="rgba(37,99,235,0.76)" if bullish else "rgba(239,68,68,0.62)",
-        text="rgba(20,184,166,0.95)" if bullish else "rgba(239,68,68,0.92)",
+        top=value,
+        bottom=value - height,
+        fill="rgba(239,68,68,0.14)",
+        border="rgba(239,68,68,0.68)",
+        text="rgba(239,68,68,0.92)",
         border_style="solid",
-    )
+    ) | {"value": value}
+
+
+def _bullish_pa_orderblock(rows: pd.DataFrame, atr: pd.Series, start_index: int, end_index: int, end_time: int) -> dict | None:
+    if start_index < 0 or end_index <= start_index:
+        return None
+    window = rows.iloc[start_index : end_index + 1]
+    if window.empty:
+        return None
+    min_pos = int(window["low"].astype(float).idxmin())
+    value = float(rows.iloc[min_pos]["low"])
+    height = float(atr.iloc[min(min_pos, len(atr) - 1)] or 0)
+    if height <= 0:
+        height = max(value * 0.0005, 1.0)
+    return _zone(
+        kind="pa-ob",
+        direction="bullish",
+        label="",
+        start_time=int(rows.iloc[min_pos]["datetime"].timestamp()),
+        end_time=end_time,
+        top=value + height,
+        bottom=value,
+        fill="rgba(20,184,166,0.14)",
+        border="rgba(20,184,166,0.68)",
+        text="rgba(20,184,166,0.92)",
+        border_style="solid",
+    ) | {"value": value}
+
+
+def _pa_trend_lines(df: pd.DataFrame, length: int = 30) -> list[dict]:
+    lookback = max(10, int(length))
+    highs, lows = _swing_points(df, lookback)
+    lines: list[dict] = []
+    if len(highs) >= 2:
+        start, end = highs[-2], highs[-1]
+        if end[1] < start[1]:
+            lines.append(_extended_trend_line(df, start, end, "rgba(239,68,68,0.72)"))
+    if len(lows) >= 2:
+        start, end = lows[-2], lows[-1]
+        if end[1] > start[1]:
+            lines.append(_extended_trend_line(df, start, end, "rgba(20,184,166,0.78)"))
+    return lines
+
+
+def _extended_trend_line(df: pd.DataFrame, start: tuple[pd.Timestamp, float], end: tuple[pd.Timestamp, float], color: str) -> dict:
+    start_ts, start_value = start
+    end_ts, end_value = end
+    end_time = int(df.index[-1].timestamp())
+    start_time = int(start_ts.timestamp())
+    pivot_end_time = int(end_ts.timestamp())
+    if pivot_end_time == start_time:
+        projected = end_value
+    else:
+        slope = (end_value - start_value) / (pivot_end_time - start_time)
+        projected = start_value + (slope * (end_time - start_time))
+    return {
+        "startTime": start_time,
+        "startPrice": float(start_value),
+        "endTime": end_time,
+        "endPrice": float(projected),
+        "color": color,
+    }
 
 
 def _liquidity_sweeps(df: pd.DataFrame, lookback: int = 30) -> tuple[list[dict], list[dict]]:
