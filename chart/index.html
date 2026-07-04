@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Option Terminal Pro</title>
+
+<link rel="stylesheet" href="chart.css">
+
+<!-- Lightweight Charts -->
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+
+<body>
+
+<div id="terminal">
+
+    <div id="toolbar">
+        <button id="cursorTool">Cursor</button>
+        <button id="crosshairTool">Crosshair</button>
+        <button id="trendTool">Trend</button>
+        <button id="horizontalTool">H-Line</button>
+        <button id="verticalTool">V-Line</button>
+        <button id="rectangleTool">Rectangle</button>
+        <button id="fibTool">Fib</button>
+        <button id="textTool">Text</button>
+        <button id="deleteTool">Delete</button>
+    </div>
+
+    <div id="chartContainer">
+        <div id="chart"></div>
+    </div>
+
+    <div id="statusBar">
+        <span id="symbol">NIFTY</span>
+        <span id="timeframe">5 Min</span>
+        <span id="ohlc">O:- H:- L:- C:-</span>
+        <span id="volume">Vol:-</span>
+    </div>
+
+</div>
+
+<!--
+IMPORTANT
+
+chart.py injects these files dynamically:
+
+chart.js
+toolbar.js
+drawings.js
+indicators.js
+
+Do NOT include them here, otherwise they load twice.
+
+This HTML should remain a pure layout file.
+-->
+
+</body>
+</html>
