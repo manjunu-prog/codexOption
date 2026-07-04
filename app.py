@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
+from api.alerts import TelegramNotifier, app_login_code, format_signal_time, signal_key
 from api.fyers_login import FyersLogin
 from api.historical import HistoricalData
 from api.option_chain import OptionChain
@@ -12,7 +13,6 @@ from config import APP_NAME, FYERS, INDEX_CONFIG, TIMEFRAMES
 from indicators.core import alphatrend, ema, fvg_ifvg_order_blocks, market_structure, volume_delta, vwap
 
 st.set_page_config(page_title=APP_NAME, layout="wide")
-st.title("Option Terminal Pro")
 
 
 def secrets_value(key: str, default: str = "") -> str:
@@ -20,6 +20,30 @@ def secrets_value(key: str, default: str = "") -> str:
         return st.secrets.get(key, default)
     except Exception:
         return default
+
+
+def require_login() -> None:
+    code = app_login_code()
+    if not code:
+        return
+
+    if st.session_state.get("app_unlocked"):
+        return
+
+    st.title("Option Terminal Pro")
+    st.subheader("Enter access code")
+    entered = st.text_input("Access code", type="password", max_chars=max(6, len(code)))
+    if st.button("Unlock", width="stretch"):
+        if entered == code:
+            st.session_state["app_unlocked"] = True
+            st.rerun()
+        else:
+            st.error("Invalid access code.")
+    st.stop()
+
+
+require_login()
+st.title("Option Terminal Pro")
 
 
 def credentials_from_sidebar() -> dict:
@@ -56,6 +80,20 @@ def load_chain(_client, symbol: str, strikecount: int) -> pd.DataFrame:
     return OptionChain(_client).fetch(symbol, strikecount=strikecount)
 
 
+@st.cache_resource(show_spinner=False)
+def get_notifier() -> TelegramNotifier:
+    return TelegramNotifier()
+
+
+def timeframe_seconds(resolution: str) -> int:
+    if resolution == "D":
+        return 24 * 60 * 60
+    try:
+        return int(resolution) * 60
+    except Exception:
+        return 300
+
+
 with st.sidebar:
     st.header("Market")
     index_name = st.selectbox("Index", list(INDEX_CONFIG.keys()), index=0)
@@ -63,7 +101,7 @@ with st.sidebar:
     days = st.slider("History days", 1, 30, 5)
     strike_window = st.slider("Strike window", 5, 40, INDEX_CONFIG[index_name]["strikecount"])
     auto_refresh = st.toggle("Auto refresh", value=True)
-    refresh_seconds = st.slider("Refresh seconds", 5, 120, 60)
+    refresh_seconds = st.slider("Refresh seconds", 5, 120, 30)
 
     st.header("Indicators")
     with st.sidebar.expander("EMA", expanded=False):
@@ -160,8 +198,8 @@ def build_overlays(df: pd.DataFrame) -> dict:
     if show_ob:
         visible_kinds.add("ob")
 
-    zones = fvg_ifvg_order_blocks(df) if visible_kinds else []
-    zones = [zone for zone in zones if zone.get("kind") in visible_kinds]
+    all_zones = fvg_ifvg_order_blocks(df) if visible_kinds or get_notifier().enabled else []
+    zones = [zone for zone in all_zones if zone.get("kind") in visible_kinds]
     return {
         "emas": [{"period": period, "data": ema(df, period)} for period in ema_periods],
         "vwap": vwap(df) if show_vwap else None,
@@ -173,6 +211,7 @@ def build_overlays(df: pd.DataFrame) -> dict:
         if show_alphatrend
         else None,
         "zones": zones,
+        "alert_zones": all_zones,
         "structure": market_structure(
             df,
             lookback=int(structure_len),
@@ -182,6 +221,77 @@ def build_overlays(df: pd.DataFrame) -> dict:
         if show_structure
         else None,
     }
+
+
+def send_fresh_alerts(spec: dict, df: pd.DataFrame, overlays: dict) -> None:
+    notifier = get_notifier()
+    if not notifier.enabled or df.empty:
+        return
+
+    last_ts = int(df.index.max().timestamp())
+    freshness = 10 * 60
+    signals: list[dict] = []
+
+    for marker in (overlays.get("alphatrend") or {}).get("markers", []):
+        text = marker.get("text")
+        timestamp = int(marker.get("time", 0) or 0)
+        if text not in {"BUY", "SELL"} or timestamp < last_ts - freshness:
+            continue
+        signals.append(
+            {
+                "kind": text,
+                "time": timestamp,
+                "price": marker.get("price"),
+            }
+        )
+
+    for level in (overlays.get("structure") or {}).get("levels", []):
+        label = str(level.get("label", ""))
+        timestamp = int(level.get("endTime") or level.get("time") or 0)
+        if label not in {"BoS", "CHoCH"} or timestamp < last_ts - freshness:
+            continue
+        signals.append(
+            {
+                "kind": label,
+                "time": timestamp,
+                "price": level.get("price"),
+            }
+        )
+
+    for zone in overlays.get("alert_zones") or []:
+        if zone.get("kind") != "ob":
+            continue
+        timestamp = int(zone.get("endTime") or zone.get("startTime") or 0)
+        if timestamp < last_ts - freshness:
+            continue
+        direction = zone.get("direction")
+        label = "Bullish OB" if direction == "bullish" else "Bearish OB"
+        signals.append(
+            {
+                "kind": label,
+                "time": timestamp,
+                "price": zone.get("bottom") if direction == "bullish" else zone.get("top"),
+            }
+        )
+
+    for item in signals:
+        key = signal_key(spec["chart_id"], spec["symbol"], item["kind"], item["time"], item.get("price"))
+        price_text = f" @ {float(item['price']):,.2f}" if item.get("price") is not None else ""
+        message = (
+            f"Option Terminal Signal\n"
+            f"{spec['label']} | {tf_label}\n"
+            f"{item['kind']}{price_text}\n"
+            f"{format_signal_time(item['time'])}"
+        )
+        notifier.send_repeating(
+            {
+                "signal_key": key,
+                "symbol": spec["label"],
+                "signal_type": item["kind"],
+                "signal_time": item["time"],
+                "message": message,
+            }
+        )
 
 
 def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, dict] | tuple[None, None]:
@@ -196,6 +306,7 @@ def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, di
         return None, None
 
     overlays = build_overlays(chart_df)
+    send_fresh_alerts(spec, chart_df, overlays)
     last_row = chart_df.iloc[-1]
     delta = volume_delta(chart_df.tail(80))
     st.caption(

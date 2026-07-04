@@ -30,14 +30,28 @@ export SUPABASE_URL="https://your-project.supabase.co"
 export SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"
 ```
 
+Use the Supabase project API URL for `SUPABASE_URL`, not the database connection string that starts with `postgresql://`.
+
 You can use `SUPABASE_ANON_KEY` instead of `SUPABASE_SERVICE_ROLE_KEY`, but then your Row Level Security policies must allow read/write/delete for the `candles` table.
+
+Optional app lock and Telegram alert secrets:
+
+```bash
+export APP_LOGIN_CODE="123456"
+export TELEGRAM_BOT_TOKEN_1="your-bot-token"
+export TELEGRAM_CHAT_ID_1="your-chat-id"
+export TELEGRAM_BOT_TOKEN_2="friend-bot-token"
+export TELEGRAM_CHAT_ID_2="friend-chat-id"
+```
+
+The app sends fresh BUY, SELL, BoS, CHoCH, Bullish OB, and Bearish OB alerts up to 10 times, spaced 30 seconds apart. It also supports one shared bot with multiple chats using `TELEGRAM_BOT_TOKEN` and comma-separated `TELEGRAM_CHAT_IDS`.
 
 ## Included
 
 - Full-width index chart with CE and PE charts below
 - Separate CE and PE strike selectors
 - FYERS historical candles and option-chain table
-- 60-second auto refresh by default
+- 30-second auto refresh by default
 - EMA, VWAP, AlphaTrend, FVG/iFVG, order blocks, BoS/CHoCH, and liquidity overlays
 - Click-to-focus candle zoom, chart view persistence, horizontal panning, and drawing delete support
 
@@ -68,3 +82,5 @@ on public.candles (symbol, resolution, timestamp);
 ```
 
 The app keeps roughly the last 4 days by deleting older candle rows during refresh. If Supabase secrets are missing, the app automatically falls back to direct FYERS pulls.
+
+The same SQL file also creates `signal_alerts`, which prevents duplicate Telegram alerts on refresh.
