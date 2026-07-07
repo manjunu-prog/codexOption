@@ -104,34 +104,6 @@ with st.sidebar:
     auto_refresh = st.toggle("Auto refresh", value=True)
     refresh_seconds = st.slider("Refresh seconds", 5, 120, 30)
 
-    st.header("Indicators")
-    with st.sidebar.expander("EMA", expanded=False):
-        ema_periods = st.multiselect("Periods", [9, 20, 50, 100, 200], default=[20])
-    with st.sidebar.expander("VWAP", expanded=False):
-        show_vwap = st.checkbox("Show VWAP", value=True)
-    with st.sidebar.expander("CPR", expanded=False):
-        show_cpr = st.checkbox("Show CPR", value=False)
-        show_cpr_pivots = st.checkbox("Show R/S levels", value=True)
-    with st.sidebar.expander("Angle Market", expanded=False):
-        show_angle_market = st.checkbox("Show Angle Market", value=False)
-        angle_market_length = st.number_input("Length", min_value=2, max_value=50, value=5)
-        angle_market_angle = st.number_input("Angle", min_value=0.0, max_value=1.0, value=0.1, step=0.01)
-        angle_market_deviation = st.number_input("Deviation", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
-    with st.sidebar.expander("AlphaTrend", expanded=True):
-        show_alphatrend = st.checkbox("Show AlphaTrend", value=True)
-        alphatrend_period = st.number_input("Period", min_value=1, max_value=100, value=14)
-        alphatrend_coeff = st.number_input("Multiplier", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
-    with st.sidebar.expander("FVG / iFVG", expanded=False):
-        show_fvg = st.checkbox("Show FVG", value=False)
-        show_ifvg = st.checkbox("Show iFVG", value=False)
-    with st.sidebar.expander("Order Blocks", expanded=False):
-        show_ob = st.checkbox("Show Order Blocks", value=False)
-    with st.sidebar.expander("PA Toolkit", expanded=False):
-        show_structure = st.checkbox("Show BoS / CHoCH", value=False)
-        structure_len = st.number_input("Structure length", min_value=2, max_value=50, value=9)
-        show_liquidity = st.checkbox("Show Liquidity Sweeps", value=False)
-        liquidity_len = st.number_input("Liquidity length", min_value=5, max_value=100, value=30)
-
 credentials = credentials_from_sidebar()
 
 if auto_refresh:
@@ -173,11 +145,46 @@ selected_pe_strike = None
 index_chart_spec = {"title": "Index", "symbol": spot_symbol, "label": index_name, "chart_id": f"{index_name}:INDEX"}
 ce_chart_spec = None
 pe_chart_spec = None
+
+show_ema = False
+ema_periods = [20]
+show_vwap = False
+show_cpr = False
+show_cpr_pivots = True
+show_angle_market = False
+angle_market_length = 5
+angle_market_angle = 0.1
+angle_market_deviation = 1.0
+show_alphatrend = True
+alphatrend_period = 14
+alphatrend_coeff = 1.0
+show_fvg = False
+show_ifvg = False
+show_ob = False
+show_structure = False
+structure_len = 9
+show_liquidity = False
+liquidity_len = 30
+
 if not chain_df.empty:
+    st.subheader("Strikes")
     strikes = sorted(chain_df["strike"].unique().tolist())
     default_idx = strikes.index(atm) if atm in strikes else len(strikes) // 2
-    selected_ce_strike = st.sidebar.selectbox("CE strike", strikes, index=default_idx)
-    selected_pe_strike = st.sidebar.selectbox("PE strike", strikes, index=default_idx)
+    strike_cols = st.columns(2)
+    selected_ce_strike = strike_cols[0].radio(
+        "CE strike",
+        strikes,
+        index=default_idx,
+        horizontal=True,
+        key="ce_strike_main",
+    )
+    selected_pe_strike = strike_cols[1].radio(
+        "PE strike",
+        strikes,
+        index=default_idx,
+        horizontal=True,
+        key="pe_strike_main",
+    )
 
     ce_row = chain_df[(chain_df["strike"] == selected_ce_strike) & (chain_df["type"] == "CE")]
     if not ce_row.empty:
@@ -197,6 +204,93 @@ if not chain_df.empty:
             "chart_id": f"{index_name}:PE",
         }
 
+st.subheader("Indicators")
+indicator_choice = st.radio(
+    "Indicator",
+    ["AlphaTrend", "EMA", "VWAP", "CPR", "Angle Market", "FVG", "iFVG", "Order Blocks", "PA Toolkit", "None"],
+    horizontal=True,
+    key="indicator_choice_main",
+)
+
+show_alphatrend = indicator_choice == "AlphaTrend"
+show_ema = indicator_choice == "EMA"
+show_vwap = indicator_choice == "VWAP"
+show_cpr = indicator_choice == "CPR"
+show_angle_market = indicator_choice == "Angle Market"
+show_fvg = indicator_choice == "FVG"
+show_ifvg = indicator_choice == "iFVG"
+show_ob = indicator_choice == "Order Blocks"
+show_structure = indicator_choice == "PA Toolkit"
+
+if indicator_choice == "EMA":
+    ema_periods = st.multiselect(
+        "EMA periods",
+        [9, 20, 50, 100, 200],
+        default=[20],
+        key="ema_periods_main",
+    )
+elif indicator_choice == "CPR":
+    show_cpr_pivots = st.checkbox("Show R/S levels", value=True, key="cpr_pivots_main")
+elif indicator_choice == "AlphaTrend":
+    alpha_cols = st.columns(2)
+    alphatrend_period = alpha_cols[0].number_input(
+        "Period",
+        min_value=1,
+        max_value=100,
+        value=14,
+        key="alphatrend_period_main",
+    )
+    alphatrend_coeff = alpha_cols[1].number_input(
+        "Multiplier",
+        min_value=0.1,
+        max_value=10.0,
+        value=1.0,
+        step=0.1,
+        key="alphatrend_coeff_main",
+    )
+elif indicator_choice == "Angle Market":
+    angle_cols = st.columns(3)
+    angle_market_length = angle_cols[0].number_input(
+        "Length",
+        min_value=2,
+        max_value=50,
+        value=5,
+        key="angle_market_length_main",
+    )
+    angle_market_angle = angle_cols[1].number_input(
+        "Angle",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.1,
+        step=0.01,
+        key="angle_market_angle_main",
+    )
+    angle_market_deviation = angle_cols[2].number_input(
+        "Deviation",
+        min_value=0.1,
+        max_value=10.0,
+        value=1.0,
+        step=0.1,
+        key="angle_market_deviation_main",
+    )
+elif indicator_choice == "PA Toolkit":
+    pa_cols = st.columns(3)
+    structure_len = pa_cols[0].number_input(
+        "Structure length",
+        min_value=2,
+        max_value=50,
+        value=9,
+        key="structure_len_main",
+    )
+    show_liquidity = pa_cols[1].checkbox("Show Liquidity Sweeps", value=False, key="show_liquidity_main")
+    liquidity_len = pa_cols[2].number_input(
+        "Liquidity length",
+        min_value=5,
+        max_value=100,
+        value=30,
+        key="liquidity_len_main",
+    )
+
 
 def build_overlays(df: pd.DataFrame) -> dict:
     visible_kinds = set()
@@ -210,7 +304,7 @@ def build_overlays(df: pd.DataFrame) -> dict:
     all_zones = fvg_ifvg_order_blocks(df) if visible_kinds or get_notifier().enabled else []
     zones = [zone for zone in all_zones if zone.get("kind") in visible_kinds]
     return {
-        "emas": [{"period": period, "data": ema(df, period)} for period in ema_periods],
+        "emas": [{"period": period, "data": ema(df, period)} for period in ema_periods] if show_ema else [],
         "vwap": vwap(df) if show_vwap else None,
         "cpr": cpr(df, show_pivots=show_cpr_pivots) if show_cpr else None,
         "angle_market": angle_market(
