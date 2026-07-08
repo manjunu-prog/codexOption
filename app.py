@@ -1,5 +1,7 @@
 """Option Terminal Pro."""
 
+import json
+
 import pandas as pd
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
@@ -9,10 +11,13 @@ from api.fyers_login import FyersLogin
 from api.historical import HistoricalData
 from api.option_chain import OptionChain
 from chart.chart import TradingChart
-from config import APP_NAME, FYERS, INDEX_CONFIG, TIMEFRAMES
+from config import APP_NAME, DATA_DIR, FYERS, INDEX_CONFIG, TIMEFRAMES, TOP_SPOT_QUOTES
 from indicators.core import angle_market, alphatrend, cpr, ema, fvg_ifvg_order_blocks, market_structure, volume_delta, vwap
 
 st.set_page_config(page_title=APP_NAME, layout="wide")
+
+PREFERENCES_FILE = DATA_DIR / "last_activity.json"
+INDICATOR_OPTIONS = ["AlphaTrend", "EMA", "VWAP", "CPR", "Angle Market", "FVG", "iFVG", "Order Blocks", "PA Toolkit"]
 
 
 def secrets_value(key: str, default: str = "") -> str:
@@ -20,6 +25,41 @@ def secrets_value(key: str, default: str = "") -> str:
         return st.secrets.get(key, default)
     except Exception:
         return default
+
+
+def load_preferences() -> dict:
+    if not PREFERENCES_FILE.exists():
+        return {}
+    try:
+        return json.loads(PREFERENCES_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def save_preferences(values: dict) -> None:
+    try:
+        PREFERENCES_FILE.write_text(json.dumps(values, indent=2, sort_keys=True))
+    except Exception:
+        pass
+
+
+def option_index(options: list, value, default: int = 0) -> int:
+    try:
+        return options.index(value)
+    except ValueError:
+        return default
+
+
+def valid_options(options: list, values, default: list):
+    if not isinstance(values, list):
+        return default
+    selected = [value for value in values if value in options]
+    return selected or default
+
+
+def preference_number(preferences: dict, key: str, default):
+    value = preferences.get(key, default)
+    return default if value is None else value
 
 
 def require_login() -> None:
@@ -44,6 +84,7 @@ def require_login() -> None:
 
 require_login()
 st.title("Option Terminal Pro")
+preferences = load_preferences()
 
 
 def credentials_from_sidebar() -> dict:
@@ -71,13 +112,27 @@ def get_client(credentials: dict):
 
 
 @st.cache_data(ttl=20, show_spinner=False)
-def load_candles(_client, symbol: str, resolution: str, days: int) -> pd.DataFrame:
+def load_candles(_client, symbol: str, resolution: str, days: int, refresh_nonce: int = 0) -> pd.DataFrame:
     return HistoricalData(client=_client).get_candles(symbol, resolution, days)
 
 
 @st.cache_data(ttl=8, show_spinner=False)
 def load_chain(_client, symbol: str, strikecount: int) -> pd.DataFrame:
     return OptionChain(_client).fetch(symbol, strikecount=strikecount)
+
+
+@st.cache_data(ttl=8, show_spinner=False)
+def load_quotes(_client, symbols: list[str]) -> dict[str, float]:
+    response = _client.quotes(data={"symbols": ",".join(symbols)})
+    if response.get("s") != "ok":
+        return {}
+    quotes = {}
+    for item in response.get("d", []):
+        symbol = item.get("n")
+        value = item.get("v", {})
+        if symbol and value.get("lp") is not None:
+            quotes[symbol] = float(value["lp"])
+    return quotes
 
 
 @st.cache_resource(show_spinner=False)
@@ -94,15 +149,142 @@ def timeframe_seconds(resolution: str) -> int:
         return 300
 
 
+def compact_number(value: float | int | None) -> str:
+    if value is None or pd.isna(value):
+        return "-"
+    value = float(value)
+    sign = "-" if value < 0 else ""
+    value = abs(value)
+    if value >= 10_000_000:
+        return f"{sign}{value / 10_000_000:.2f}Cr"
+    if value >= 100_000:
+        return f"{sign}{value / 100_000:.2f}L"
+    if value >= 1_000:
+        return f"{sign}{value / 1_000:.2f}K"
+    return f"{sign}{value:.0f}"
+
+
+def percent_text(value: float | int | None) -> str:
+    if value is None or pd.isna(value):
+        return "-"
+    return f"{float(value):,.2f}%"
+
+
+def oi_change_percent(oi: float, oi_change: float, fallback_pct: float | None = None) -> float | None:
+    if fallback_pct is not None and not pd.isna(fallback_pct) and float(fallback_pct) != 0:
+        return float(fallback_pct)
+    previous_oi = float(oi) - float(oi_change)
+    if previous_oi == 0:
+        return None
+    return (float(oi_change) / previous_oi) * 100
+
+
+def option_side_stats(row: pd.Series | None) -> dict:
+    if row is None or row.empty:
+        return {"ltp": None, "oi": None, "oi_change": None, "oi_change_pct": None, "volume": None}
+    oi = float(row.get("oi", 0) or 0)
+    oi_change = float(row.get("oi_change", 0) or 0)
+    return {
+        "ltp": float(row.get("ltp", 0) or 0),
+        "oi": oi,
+        "oi_change": oi_change,
+        "oi_change_pct": oi_change_percent(oi, oi_change, row.get("oi_change_pct")),
+        "volume": float(row.get("volume", 0) or 0),
+    }
+
+
+def strike_stats(chain_df: pd.DataFrame, strike: int | None) -> dict[str, dict]:
+    empty_stats = {"CE": option_side_stats(None), "PE": option_side_stats(None)}
+    if chain_df.empty or strike is None:
+        return empty_stats
+    stats = {}
+    for side in ("CE", "PE"):
+        rows = chain_df[(chain_df["strike"] == strike) & (chain_df["type"] == side)]
+        stats[side] = option_side_stats(rows.iloc[0] if not rows.empty else None)
+    return stats
+
+
+def total_oi_change_stats(chain_df: pd.DataFrame) -> dict[str, dict]:
+    stats = {"CE": {"oi_change": None, "oi_change_pct": None}, "PE": {"oi_change": None, "oi_change_pct": None}}
+    if chain_df.empty:
+        return stats
+    for side in ("CE", "PE"):
+        rows = chain_df[chain_df["type"] == side]
+        if rows.empty:
+            continue
+        oi = float(rows["oi"].sum())
+        oi_change = float(rows["oi_change"].sum()) if "oi_change" in rows else 0.0
+        previous_oi = oi - oi_change
+        stats[side] = {
+            "oi_change": oi_change,
+            "oi_change_pct": (oi_change / previous_oi) * 100 if previous_oi else None,
+        }
+    return stats
+
+
+def render_index_oi_summary(chain_df: pd.DataFrame) -> None:
+    stats = total_oi_change_stats(chain_df)
+    st.caption("Total OI Change")
+    cols = st.columns(2)
+    for col, side in zip(cols, ("CE", "PE")):
+        item = stats[side]
+        col.metric(
+            f"{side} OI Chg",
+            percent_text(item["oi_change_pct"]),
+            compact_number(item["oi_change"]),
+        )
+
+
+def render_strike_oi_summary(chain_df: pd.DataFrame, strike: int | None) -> None:
+    stats = strike_stats(chain_df, strike)
+    st.caption(f"Strike {strike or '-'} OI / Volume")
+    cols = st.columns(2)
+    for col, side in zip(cols, ("CE", "PE")):
+        item = stats[side]
+        col.metric(
+            f"{side} OI Chg",
+            percent_text(item["oi_change_pct"]),
+            f"Vol {compact_number(item['volume'])} | OI {compact_number(item['oi'])}",
+        )
+
+
 with st.sidebar:
     st.header("Market")
-    index_name = st.selectbox("Index", list(INDEX_CONFIG.keys()), index=0)
-    tf_label = st.selectbox("Timeframe", list(TIMEFRAMES.keys()), index=3)
-    days = st.slider("History days", 1, 30, 5)
-    latest_session_only = st.toggle("Latest session only", value=True)
-    strike_window = st.slider("Strike window", 5, 40, INDEX_CONFIG[index_name]["strikecount"])
-    auto_refresh = st.toggle("Auto refresh", value=True)
-    refresh_seconds = st.slider("Refresh seconds", 5, 120, 30)
+    index_options = list(INDEX_CONFIG.keys())
+    timeframe_options = list(TIMEFRAMES.keys())
+    index_name = st.selectbox(
+        "Index",
+        index_options,
+        index=option_index(index_options, preferences.get("index_name"), 0),
+        key="index_name",
+    )
+    tf_label = st.selectbox(
+        "Timeframe",
+        timeframe_options,
+        index=option_index(timeframe_options, preferences.get("tf_label"), 3),
+        key="tf_label",
+    )
+    days = st.slider("History days", 1, 30, int(preference_number(preferences, "days", 5)), key="days")
+    latest_session_only = st.toggle(
+        "Latest session only",
+        value=bool(preferences.get("latest_session_only", True)),
+        key="latest_session_only",
+    )
+    strike_window = st.slider(
+        "Strike window",
+        5,
+        40,
+        int(preference_number(preferences, "strike_window", INDEX_CONFIG[index_name]["strikecount"])),
+        key="strike_window",
+    )
+    auto_refresh = st.toggle("Auto refresh", value=bool(preferences.get("auto_refresh", True)), key="auto_refresh")
+    refresh_seconds = st.slider(
+        "Refresh seconds",
+        5,
+        120,
+        int(preference_number(preferences, "refresh_seconds", 30)),
+        key="refresh_seconds",
+    )
 
 credentials = credentials_from_sidebar()
 
@@ -119,6 +301,12 @@ try:
 except Exception as exc:
     st.error(f"FYERS login failed: {exc}")
     st.stop()
+
+top_quotes = load_quotes(client, list(TOP_SPOT_QUOTES.values()))
+top_quote_cols = st.columns(len(TOP_SPOT_QUOTES))
+for col, (name, symbol) in zip(top_quote_cols, TOP_SPOT_QUOTES.items()):
+    price = top_quotes.get(symbol)
+    col.metric(name, f"{price:,.2f}" if price is not None else "-")
 
 index_cfg = INDEX_CONFIG[index_name]
 spot_symbol = index_cfg["spot"]
@@ -170,19 +358,19 @@ if not chain_df.empty:
     st.subheader("Strikes")
     strikes = sorted(chain_df["strike"].unique().tolist())
     default_idx = strikes.index(atm) if atm in strikes else len(strikes) // 2
+    ce_default_idx = option_index(strikes, preferences.get("selected_ce_strike"), default_idx)
+    pe_default_idx = option_index(strikes, preferences.get("selected_pe_strike"), default_idx)
     strike_cols = st.columns(2)
     selected_ce_strike = strike_cols[0].radio(
         "CE strike",
         strikes,
-        index=default_idx,
-        horizontal=True,
+        index=ce_default_idx,
         key="ce_strike_main",
     )
     selected_pe_strike = strike_cols[1].radio(
         "PE strike",
         strikes,
-        index=default_idx,
-        horizontal=True,
+        index=pe_default_idx,
         key="pe_strike_main",
     )
 
@@ -205,63 +393,72 @@ if not chain_df.empty:
         }
 
 st.subheader("Indicators")
-indicator_choice = st.radio(
-    "Indicator",
-    ["AlphaTrend", "EMA", "VWAP", "CPR", "Angle Market", "FVG", "iFVG", "Order Blocks", "PA Toolkit", "None"],
-    horizontal=True,
-    key="indicator_choice_main",
+saved_indicators = preferences.get("selected_indicators", ["AlphaTrend"])
+if isinstance(saved_indicators, str):
+    saved_indicators = [saved_indicators] if saved_indicators in INDICATOR_OPTIONS else ["AlphaTrend"]
+saved_indicators = [item for item in saved_indicators if item in INDICATOR_OPTIONS] or ["AlphaTrend"]
+selected_indicators = st.multiselect(
+    "Indicators",
+    INDICATOR_OPTIONS,
+    default=saved_indicators,
+    key="selected_indicators_main",
 )
 
-show_alphatrend = indicator_choice == "AlphaTrend"
-show_ema = indicator_choice == "EMA"
-show_vwap = indicator_choice == "VWAP"
-show_cpr = indicator_choice == "CPR"
-show_angle_market = indicator_choice == "Angle Market"
-show_fvg = indicator_choice == "FVG"
-show_ifvg = indicator_choice == "iFVG"
-show_ob = indicator_choice == "Order Blocks"
-show_structure = indicator_choice == "PA Toolkit"
+show_alphatrend = "AlphaTrend" in selected_indicators
+show_ema = "EMA" in selected_indicators
+show_vwap = "VWAP" in selected_indicators
+show_cpr = "CPR" in selected_indicators
+show_angle_market = "Angle Market" in selected_indicators
+show_fvg = "FVG" in selected_indicators
+show_ifvg = "iFVG" in selected_indicators
+show_ob = "Order Blocks" in selected_indicators
+show_structure = "PA Toolkit" in selected_indicators
 
-if indicator_choice == "EMA":
+if show_ema:
+    ema_options = [9, 20, 50, 100, 200]
     ema_periods = st.multiselect(
         "EMA periods",
-        [9, 20, 50, 100, 200],
-        default=[20],
+        ema_options,
+        default=valid_options(ema_options, preferences.get("ema_periods", [20]), [20]),
         key="ema_periods_main",
     )
-elif indicator_choice == "CPR":
-    show_cpr_pivots = st.checkbox("Show R/S levels", value=True, key="cpr_pivots_main")
-elif indicator_choice == "AlphaTrend":
+if show_cpr:
+    show_cpr_pivots = st.checkbox(
+        "Show R/S levels",
+        value=bool(preferences.get("show_cpr_pivots", True)),
+        key="cpr_pivots_main",
+    )
+if show_alphatrend:
     alpha_cols = st.columns(2)
     alphatrend_period = alpha_cols[0].number_input(
         "Period",
         min_value=1,
         max_value=100,
-        value=14,
+        value=int(preference_number(preferences, "alphatrend_period", 14)),
         key="alphatrend_period_main",
     )
     alphatrend_coeff = alpha_cols[1].number_input(
         "Multiplier",
         min_value=0.1,
         max_value=10.0,
-        value=1.0,
+        value=float(preference_number(preferences, "alphatrend_coeff", 1.0)),
         step=0.1,
         key="alphatrend_coeff_main",
     )
-elif indicator_choice == "Angle Market":
+if show_angle_market:
     angle_cols = st.columns(3)
     angle_market_length = angle_cols[0].number_input(
         "Length",
         min_value=2,
         max_value=50,
-        value=5,
+        value=int(preference_number(preferences, "angle_market_length", 5)),
         key="angle_market_length_main",
     )
     angle_market_angle = angle_cols[1].number_input(
         "Angle",
         min_value=0.0,
         max_value=1.0,
-        value=0.1,
+        value=float(preference_number(preferences, "angle_market_angle", 0.1)),
         step=0.01,
         key="angle_market_angle_main",
     )
@@ -269,27 +466,56 @@ elif indicator_choice == "Angle Market":
         "Deviation",
         min_value=0.1,
         max_value=10.0,
-        value=1.0,
+        value=float(preference_number(preferences, "angle_market_deviation", 1.0)),
         step=0.1,
         key="angle_market_deviation_main",
     )
-elif indicator_choice == "PA Toolkit":
+if show_structure:
     pa_cols = st.columns(3)
     structure_len = pa_cols[0].number_input(
         "Structure length",
         min_value=2,
         max_value=50,
-        value=9,
+        value=int(preference_number(preferences, "structure_len", 9)),
         key="structure_len_main",
     )
-    show_liquidity = pa_cols[1].checkbox("Show Liquidity Sweeps", value=False, key="show_liquidity_main")
+    show_liquidity = pa_cols[1].checkbox(
+        "Show Liquidity Sweeps",
+        value=bool(preferences.get("show_liquidity", False)),
+        key="show_liquidity_main",
+    )
     liquidity_len = pa_cols[2].number_input(
         "Liquidity length",
         min_value=5,
         max_value=100,
-        value=30,
+        value=int(preference_number(preferences, "liquidity_len", 30)),
         key="liquidity_len_main",
     )
+
+save_preferences(
+    {
+        "index_name": index_name,
+        "tf_label": tf_label,
+        "days": int(days),
+        "latest_session_only": bool(latest_session_only),
+        "strike_window": int(strike_window),
+        "auto_refresh": bool(auto_refresh),
+        "refresh_seconds": int(refresh_seconds),
+        "selected_ce_strike": int(selected_ce_strike) if selected_ce_strike is not None else None,
+        "selected_pe_strike": int(selected_pe_strike) if selected_pe_strike is not None else None,
+        "selected_indicators": list(selected_indicators),
+        "ema_periods": [int(period) for period in ema_periods],
+        "show_cpr_pivots": bool(show_cpr_pivots),
+        "alphatrend_period": int(alphatrend_period),
+        "alphatrend_coeff": float(alphatrend_coeff),
+        "angle_market_length": int(angle_market_length),
+        "angle_market_angle": float(angle_market_angle),
+        "angle_market_deviation": float(angle_market_deviation),
+        "structure_len": int(structure_len),
+        "show_liquidity": bool(show_liquidity),
+        "liquidity_len": int(liquidity_len),
+    }
+)
 
 
 def build_overlays(df: pd.DataFrame) -> dict:
@@ -458,8 +684,15 @@ def send_fresh_alerts(spec: dict, df: pd.DataFrame, overlays: dict) -> None:
 
 
 def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, dict] | tuple[None, None]:
+    chart_id = spec.get("chart_id", spec["label"])
+    nonce_key = f"refresh_nonce:{chart_id}"
+    if nonce_key not in st.session_state:
+        st.session_state[nonce_key] = 0
+    if st.button(f"Refresh {spec['title']}", key=f"refresh_button:{chart_id}"):
+        st.session_state[nonce_key] += 1
+
     try:
-        chart_df = load_candles(client, spec["symbol"], TIMEFRAMES[tf_label], days)
+        chart_df = load_candles(client, spec["symbol"], TIMEFRAMES[tf_label], days, st.session_state[nonce_key])
     except Exception as exc:
         st.error(f"{spec['label']} candles failed: {exc}")
         return None, None
@@ -489,7 +722,7 @@ def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, di
         structure=overlays["structure"],
         symbol=spec["label"],
         timeframe=tf_label,
-        chart_id=spec.get("chart_id", spec["label"]),
+        chart_id=chart_id,
         height=height,
     )
     return chart_df, overlays
@@ -505,13 +738,15 @@ metric_cols[3].metric(
 )
 
 st.subheader(index_chart_spec["title"])
+render_index_oi_summary(chain_df)
 render_market_chart(index_chart_spec, height=760)
 
 option_cols = st.columns(2)
-for col, spec in zip(option_cols, [ce_chart_spec, pe_chart_spec]):
+for col, spec, strike in zip(option_cols, [ce_chart_spec, pe_chart_spec], [selected_ce_strike, selected_pe_strike]):
     with col:
         if not spec:
             st.info("Option chart is unavailable for the selected strike.")
             continue
         st.subheader(spec["title"])
+        render_strike_oi_summary(chain_df, strike)
         render_market_chart(spec, height=760)
