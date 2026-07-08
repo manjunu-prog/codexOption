@@ -243,6 +243,23 @@ def render_index_oi_summary(chain_df: pd.DataFrame) -> None:
         )
 
 
+def index_oi_summary_items(chain_df: pd.DataFrame) -> list[dict]:
+    stats = total_oi_change_stats(chain_df)
+    items = []
+    for side in ("CE", "PE"):
+        item = stats[side]
+        oi_change = item["oi_change"]
+        items.append(
+            {
+                "label": f"{side} OI Chg",
+                "value": percent_text(item["oi_change_pct"]),
+                "meta": f"{'↓' if (oi_change or 0) < 0 else '↑'} {compact_number(oi_change)}",
+                "negative": bool((oi_change or 0) < 0),
+            }
+        )
+    return items
+
+
 def render_strike_oi_summary(chain_df: pd.DataFrame, strike: int | None) -> None:
     stats = strike_stats(chain_df, strike)
     st.caption(f"Strike {strike or '-'} OI / Volume")
@@ -254,6 +271,23 @@ def render_strike_oi_summary(chain_df: pd.DataFrame, strike: int | None) -> None
             percent_text(item["oi_change_pct"]),
             f"Vol {compact_number(item['volume'])} | OI {compact_number(item['oi'])}",
         )
+
+
+def strike_oi_summary_items(chain_df: pd.DataFrame, strike: int | None) -> list[dict]:
+    stats = strike_stats(chain_df, strike)
+    items = []
+    for side in ("CE", "PE"):
+        item = stats[side]
+        oi_change = item["oi_change"]
+        items.append(
+            {
+                "label": f"{strike or '-'} {side} OI Chg",
+                "value": percent_text(item["oi_change_pct"]),
+                "meta": f"Vol {compact_number(item['volume'])} | OI {compact_number(item['oi'])}",
+                "negative": bool((oi_change or 0) < 0),
+            }
+        )
+    return items
 
 
 with st.sidebar:
@@ -691,7 +725,11 @@ def send_fresh_alerts(spec: dict, df: pd.DataFrame, overlays: dict) -> None:
         )
 
 
-def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, dict] | tuple[None, None]:
+def render_market_chart(
+    spec: dict,
+    height: int = 520,
+    summary: list[dict] | None = None,
+) -> tuple[pd.DataFrame, dict] | tuple[None, None]:
     chart_id = spec.get("chart_id", spec["label"])
     nonce_key = f"refresh_nonce:{chart_id}"
     if nonce_key not in st.session_state:
@@ -728,6 +766,7 @@ def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, di
         alphatrend=overlays["alphatrend"],
         zones=overlays["zones"],
         structure=overlays["structure"],
+        summary=summary,
         symbol=spec["label"],
         timeframe=tf_label,
         chart_id=chart_id,
@@ -746,8 +785,7 @@ metric_cols[3].metric(
 )
 
 st.subheader(index_chart_spec["title"])
-render_index_oi_summary(chain_df)
-render_market_chart(index_chart_spec, height=760)
+render_market_chart(index_chart_spec, height=760, summary=index_oi_summary_items(chain_df))
 
 option_cols = st.columns(2)
 for col, spec, strike in zip(option_cols, [ce_chart_spec, pe_chart_spec], [selected_ce_strike, selected_pe_strike]):
@@ -756,5 +794,4 @@ for col, spec, strike in zip(option_cols, [ce_chart_spec, pe_chart_spec], [selec
             st.info("Option chart is unavailable for the selected strike.")
             continue
         st.subheader(spec["title"])
-        render_strike_oi_summary(chain_df, strike)
-        render_market_chart(spec, height=760)
+        render_market_chart(spec, height=760, summary=strike_oi_summary_items(chain_df, strike))
