@@ -12,7 +12,7 @@ from api.fyers_login import FyersLogin
 from api.historical import HistoricalData
 from api.option_chain import OptionChain
 from chart.chart import TradingChart
-from config import APP_NAME, FYERS, INDEX_CONFIG, TIMEFRAMES, TOP_SPOT_QUOTES
+from config import APP_NAME, FYERS, INDEX_CONFIG, TIMEFRAMES
 from indicators.core import angle_market, alphatrend, cpr, ema, fvg_ifvg_order_blocks, market_structure, volume_delta, vwap
 
 st.set_page_config(page_title=APP_NAME, layout="wide")
@@ -21,6 +21,11 @@ DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 PREFERENCES_FILE = DATA_DIR / "last_activity.json"
 INDICATOR_OPTIONS = ["AlphaTrend", "EMA", "VWAP", "CPR", "Angle Market", "FVG", "iFVG", "Order Blocks", "PA Toolkit"]
+TOP_SPOT_QUOTES = {
+    "CRUDEOIL": "MCX:CRUDEOIL26JULFUT",
+    "BANKNIFTY": INDEX_CONFIG["BANKNIFTY"]["spot"],
+    "SENSEX": INDEX_CONFIG["SENSEX"]["spot"],
+}
 
 
 def secrets_value(key: str, default: str = "") -> str:
