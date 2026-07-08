@@ -29,6 +29,7 @@ class TradingChart:
         fvg=None,
         zones=None,
         structure=None,
+        summary=None,
         symbol="",
         timeframe="",
         chart_id="",
@@ -49,6 +50,7 @@ class TradingChart:
 window.addEventListener("load", function(){{
     if(window.ChartEngine){{
         window.ChartEngine.setMeta({json.dumps(symbol)}, {json.dumps(timeframe)}, {json.dumps(chart_id or symbol)});
+        window.ChartEngine.setSummary({json.dumps(summary or [])});
         if(window.ChartEngine.holdViewStore) window.ChartEngine.holdViewStore(1400);
         window.ChartEngine.setCandles({json.dumps(candles)});
         window.ChartEngine.setVolume({json.dumps(volume)});

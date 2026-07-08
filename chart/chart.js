@@ -175,6 +175,34 @@ class ChartEngine {
 
     }
 
+    setSummary(items){
+        const host = document.getElementById("chartStats");
+        if(!host) return;
+        if(!Array.isArray(items) || !items.length){
+            host.innerHTML = "";
+            return;
+        }
+        host.innerHTML = items.map((item)=>{
+            const metaClass = item.negative ? "chartStatMeta negative" : "chartStatMeta";
+            return `
+                <div class="chartStatCard">
+                    <div class="chartStatLabel">${this.escapeHtml(item.label || "")}</div>
+                    <div class="chartStatValue">${this.escapeHtml(item.value || "-")}</div>
+                    <div class="${metaClass}">${this.escapeHtml(item.meta || "")}</div>
+                </div>
+            `;
+        }).join("");
+    }
+
+    escapeHtml(value){
+        return String(value)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
     installAxisPan(){
 
         const panTargets = [

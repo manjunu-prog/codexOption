@@ -67,6 +67,63 @@ html,body{
     height:100%;
 }
 
+.chartStats{
+    position:absolute;
+    top:26px;
+    left:50%;
+    transform:translateX(-50%);
+    display:flex;
+    justify-content:center;
+    gap:220px;
+    z-index:10;
+    pointer-events:none;
+    width:min(72%, 960px);
+}
+
+.chartStats:empty{
+    display:none;
+}
+
+.chartStatCard{
+    min-width:190px;
+    padding:4px 8px;
+    color:#111827;
+    text-align:left;
+    text-shadow:0 1px 1px rgba(255,255,255,.88);
+}
+
+.chartStatLabel{
+    font-size:14px;
+    font-weight:700;
+    color:#334155;
+    margin-bottom:10px;
+}
+
+.chartStatValue{
+    font-size:34px;
+    font-weight:500;
+    line-height:1;
+    letter-spacing:0;
+}
+
+.chartStatMeta{
+    display:inline-flex;
+    align-items:center;
+    gap:5px;
+    margin-top:10px;
+    padding:4px 9px;
+    border-radius:999px;
+    background:#dcfce7;
+    color:#15803d;
+    font-size:14px;
+    font-weight:700;
+}
+
+.chartStatMeta.negative{
+    background:#fee2e2;
+    color:#b91c1c;
+}
+
 .zoneLayer{
     position:absolute;
     inset:0;
