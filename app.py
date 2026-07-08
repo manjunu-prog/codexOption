@@ -129,8 +129,20 @@ def load_chain(_client, symbol: str, strikecount: int) -> pd.DataFrame:
     return OptionChain(_client).fetch(symbol, strikecount=strikecount)
 
 
+def quote_number(value: dict, keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        raw = value.get(key)
+        if raw is None or raw == "":
+            continue
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 @st.cache_data(ttl=8, show_spinner=False)
-def load_quotes(_client, symbols: list[str]) -> dict[str, float]:
+def load_quotes(_client, symbols: list[str]) -> dict[str, dict]:
     response = _client.quotes(data={"symbols": ",".join(symbols)})
     if response.get("s") != "ok":
         return {}
@@ -138,8 +150,13 @@ def load_quotes(_client, symbols: list[str]) -> dict[str, float]:
     for item in response.get("d", []):
         symbol = item.get("n")
         value = item.get("v", {})
-        if symbol and value.get("lp") is not None:
-            quotes[symbol] = float(value["lp"])
+        ltp = quote_number(value, ("lp", "ltp"))
+        if symbol and ltp is not None:
+            quotes[symbol] = {
+                "ltp": ltp,
+                "change": quote_number(value, ("ch", "change", "netChg")),
+                "change_pct": quote_number(value, ("chp", "changePercent", "pctChg")),
+            }
     return quotes
 
 
@@ -307,8 +324,19 @@ except Exception as exc:
 top_quotes = load_quotes(client, list(TOP_SPOT_QUOTES.values()))
 top_quote_cols = st.columns(len(TOP_SPOT_QUOTES))
 for col, (name, symbol) in zip(top_quote_cols, TOP_SPOT_QUOTES.items()):
-    price = top_quotes.get(symbol)
-    col.metric(name, f"{price:,.2f}" if price is not None else "-")
+    quote_item = top_quotes.get(symbol) or {}
+    price = quote_item.get("ltp")
+    change = quote_item.get("change")
+    change_pct = quote_item.get("change_pct")
+    if change is not None and change_pct is not None:
+        delta = f"{change:,.2f} ({change_pct:,.2f}%)"
+    elif change is not None:
+        delta = f"{change:,.2f}"
+    elif change_pct is not None:
+        delta = f"{change_pct:,.2f}%"
+    else:
+        delta = None
+    col.metric(name, f"{price:,.2f}" if price is not None else "-", delta=delta)
 
 index_cfg = INDEX_CONFIG[index_name]
 spot_symbol = index_cfg["spot"]
