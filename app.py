@@ -266,12 +266,6 @@ with st.sidebar:
         index=option_index(index_options, preferences.get("index_name"), 0),
         key="index_name",
     )
-    tf_label = st.selectbox(
-        "Timeframe",
-        timeframe_options,
-        index=option_index(timeframe_options, preferences.get("tf_label"), 3),
-        key="tf_label",
-    )
     days = st.slider("History days", 1, 30, int(preference_number(preferences, "days", 5)), key="days")
     latest_session_only = st.toggle(
         "Latest session only",
@@ -280,9 +274,9 @@ with st.sidebar:
     )
     strike_window = st.slider(
         "Strike window",
-        5,
-        40,
-        int(preference_number(preferences, "strike_window", INDEX_CONFIG[index_name]["strikecount"])),
+        1,
+        10,
+        min(10, int(preference_number(preferences, "strike_window", INDEX_CONFIG[index_name]["strikecount"]))),
         key="strike_window",
     )
     auto_refresh = st.toggle("Auto refresh", value=bool(preferences.get("auto_refresh", True)), key="auto_refresh")
@@ -400,6 +394,36 @@ if not chain_df.empty:
             "chart_id": f"{index_name}:PE",
         }
 
+st.subheader("Chart Timeframes")
+fallback_tf = preferences.get("tf_label", "5 Min")
+index_tf_default = preferences.get("index_tf_label", fallback_tf)
+ce_tf_default = preferences.get("ce_tf_label", index_tf_default)
+pe_tf_default = preferences.get("pe_tf_label", index_tf_default)
+tf_cols = st.columns(3)
+index_tf_label = tf_cols[0].selectbox(
+    "Index timeframe",
+    timeframe_options,
+    index=option_index(timeframe_options, index_tf_default, 3),
+    key="index_tf_label_main",
+)
+ce_tf_label = tf_cols[1].selectbox(
+    "CE timeframe",
+    timeframe_options,
+    index=option_index(timeframe_options, ce_tf_default, option_index(timeframe_options, index_tf_label, 3)),
+    key="ce_tf_label_main",
+)
+pe_tf_label = tf_cols[2].selectbox(
+    "PE timeframe",
+    timeframe_options,
+    index=option_index(timeframe_options, pe_tf_default, option_index(timeframe_options, index_tf_label, 3)),
+    key="pe_tf_label_main",
+)
+index_chart_spec["tf_label"] = index_tf_label
+if ce_chart_spec:
+    ce_chart_spec["tf_label"] = ce_tf_label
+if pe_chart_spec:
+    pe_chart_spec["tf_label"] = pe_tf_label
+
 st.subheader("Indicators")
 saved_indicators = preferences.get("selected_indicators", ["AlphaTrend"])
 if isinstance(saved_indicators, str):
@@ -503,7 +527,10 @@ if show_structure:
 save_preferences(
     {
         "index_name": index_name,
-        "tf_label": tf_label,
+        "tf_label": index_tf_label,
+        "index_tf_label": index_tf_label,
+        "ce_tf_label": ce_tf_label,
+        "pe_tf_label": pe_tf_label,
         "days": int(days),
         "latest_session_only": bool(latest_session_only),
         "strike_window": int(strike_window),
@@ -569,8 +596,8 @@ def build_overlays(df: pd.DataFrame) -> dict:
     }
 
 
-def latest_session_df(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty or TIMEFRAMES[tf_label] == "D":
+def latest_session_df(df: pd.DataFrame, chart_tf_label: str) -> pd.DataFrame:
+    if df.empty or TIMEFRAMES[chart_tf_label] == "D":
         return df
     latest_date = df.index.max().date()
     return df[df.index.date == latest_date]
@@ -625,6 +652,7 @@ def send_fresh_alerts(spec: dict, df: pd.DataFrame, overlays: dict) -> None:
     if not notifier.enabled or df.empty:
         return
 
+    chart_tf_label = spec.get("tf_label", index_tf_label)
     last_ts = int(df.index.max().timestamp())
     freshness = 10 * 60
     signals: list[dict] = []
@@ -676,7 +704,7 @@ def send_fresh_alerts(spec: dict, df: pd.DataFrame, overlays: dict) -> None:
         price_text = f" @ {float(item['price']):,.2f}" if item.get("price") is not None else ""
         message = (
             f"Option Terminal Signal\n"
-            f"{spec['label']} | {tf_label}\n"
+            f"{spec['label']} | {chart_tf_label}\n"
             f"{item['kind']}{price_text}\n"
             f"{format_signal_time(item['time'])}"
         )
@@ -693,6 +721,7 @@ def send_fresh_alerts(spec: dict, df: pd.DataFrame, overlays: dict) -> None:
 
 def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, dict] | tuple[None, None]:
     chart_id = spec.get("chart_id", spec["label"])
+    chart_tf_label = spec.get("tf_label", index_tf_label)
     nonce_key = f"refresh_nonce:{chart_id}"
     if nonce_key not in st.session_state:
         st.session_state[nonce_key] = 0
@@ -700,7 +729,7 @@ def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, di
         st.session_state[nonce_key] += 1
 
     try:
-        chart_df = load_candles(client, spec["symbol"], TIMEFRAMES[tf_label], days, st.session_state[nonce_key])
+        chart_df = load_candles(client, spec["symbol"], TIMEFRAMES[chart_tf_label], days, st.session_state[nonce_key])
     except Exception as exc:
         st.error(f"{spec['label']} candles failed: {exc}")
         return None, None
@@ -709,7 +738,7 @@ def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, di
         st.warning(f"{spec['label']} returned no candles.")
         return None, None
 
-    display_df = latest_session_df(chart_df) if latest_session_only else chart_df
+    display_df = latest_session_df(chart_df, chart_tf_label) if latest_session_only else chart_df
     overlays = trim_overlays(build_overlays(chart_df), display_df)
     send_fresh_alerts(spec, chart_df, overlays)
     last_row = display_df.iloc[-1]
@@ -729,7 +758,7 @@ def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, di
         "zones": overlays["zones"],
         "structure": overlays["structure"],
         "symbol": spec["label"],
-        "timeframe": tf_label,
+        "timeframe": chart_tf_label,
         "chart_id": chart_id,
         "height": height,
     }
