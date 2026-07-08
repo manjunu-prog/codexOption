@@ -756,6 +756,8 @@ def render_market_chart(
         f"{spec['label']} | Last {last_row.close:,.2f} | "
         f"Delta {delta['delta']:,.0f} ({delta['delta_pct']:.1f}%) | Candles {len(display_df):,}"
     )
+    structure_payload = dict(overlays["structure"] or {})
+    structure_payload["__summary"] = summary or []
     TradingChart().render(
         candles=HistoricalData.candle_json(display_df),
         volume=HistoricalData.volume_json(display_df),
@@ -765,8 +767,7 @@ def render_market_chart(
         angle_market=overlays["angle_market"],
         alphatrend=overlays["alphatrend"],
         zones=overlays["zones"],
-        structure=overlays["structure"],
-        summary=summary,
+        structure=structure_payload,
         symbol=spec["label"],
         timeframe=tf_label,
         chart_id=chart_id,
