@@ -95,6 +95,12 @@ INDEX_CONFIG = {
     "SENSEX": {"spot": "BSE:SENSEX-INDEX", "exchange": "BSE", "step": 100, "strikecount": 25},
 }
 
+TOP_SPOT_QUOTES = {
+    "CRUDEOIL": os.getenv("CRUDEOIL_SYMBOL", "MCX:CRUDEOIL26JULFUT"),
+    "BANKNIFTY": INDEX_CONFIG["BANKNIFTY"]["spot"],
+    "SENSEX": INDEX_CONFIG["SENSEX"]["spot"],
+}
+
 # =========================================================
 # TIMEFRAMES
 # =========================================================
