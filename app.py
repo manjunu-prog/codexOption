@@ -1,10 +1,14 @@
 """Option Terminal Pro."""
 
+import html
 import json
+from datetime import datetime, time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
+import yfinance as yf
 from streamlit_autorefresh import st_autorefresh
 
 from api.alerts import TelegramNotifier, app_login_code, format_signal_time, signal_key
@@ -25,6 +29,26 @@ TOP_SPOT_QUOTES = {
     "CRUDEOIL": "MCX:CRUDEOIL26JULFUT",
     "BANKNIFTY": INDEX_CONFIG["BANKNIFTY"]["spot"],
     "SENSEX": INDEX_CONFIG["SENSEX"]["spot"],
+}
+MARKET_SNAPSHOT = [
+    {"name": "Gift Nifty", "ticker": "^NSEI", "region": "Asia", "timezone": "Asia/Kolkata", "open": time(9, 15), "close": time(15, 30)},
+    {"name": "Nikkei 225", "ticker": "^N225", "region": "Asia", "timezone": "Asia/Tokyo", "open": time(9, 0), "close": time(15, 30)},
+    {"name": "Hang Seng", "ticker": "^HSI", "region": "Asia", "timezone": "Asia/Hong_Kong", "open": time(9, 30), "close": time(16, 0)},
+    {"name": "Taiwan Index", "ticker": "^TWII", "region": "Asia", "timezone": "Asia/Taipei", "open": time(9, 0), "close": time(13, 30)},
+    {"name": "S&P 500", "ticker": "^GSPC", "region": "America", "timezone": "America/New_York", "open": time(9, 30), "close": time(16, 0)},
+    {"name": "DJIA", "ticker": "^DJI", "region": "America", "timezone": "America/New_York", "open": time(9, 30), "close": time(16, 0)},
+    {"name": "Nasdaq", "ticker": "^IXIC", "region": "America", "timezone": "America/New_York", "open": time(9, 30), "close": time(16, 0)},
+    {"name": "ASX 200", "ticker": "^AXJO", "region": "Australia", "timezone": "Australia/Sydney", "open": time(10, 0), "close": time(16, 0)},
+    {"name": "FTSE 100", "ticker": "^FTSE", "region": "Europe", "timezone": "Europe/London", "open": time(8, 0), "close": time(16, 30)},
+    {"name": "CAC 40", "ticker": "^FCHI", "region": "Europe", "timezone": "Europe/Paris", "open": time(9, 0), "close": time(17, 30)},
+    {"name": "DAX", "ticker": "^GDAXI", "region": "Europe", "timezone": "Europe/Berlin", "open": time(9, 0), "close": time(17, 30)},
+]
+HEATMAP_WINDOWS = {
+    "15 Min": 15,
+    "30 Min": 30,
+    "1 Hour": 60,
+    "2 Hour": 120,
+    "3 Hour": 180,
 }
 
 
@@ -139,6 +163,272 @@ def quote_number(value: dict, keys: tuple[str, ...]) -> float | None:
         except (TypeError, ValueError):
             continue
     return None
+
+
+def is_market_live(market: dict, now_utc: datetime) -> bool:
+    local_now = now_utc.astimezone(ZoneInfo(market["timezone"]))
+    if local_now.weekday() >= 5:
+        return False
+    return market["open"] <= local_now.time() <= market["close"]
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def load_market_snapshot() -> list[dict]:
+    now_utc = datetime.now(ZoneInfo("UTC"))
+    rows = []
+    for market in MARKET_SNAPSHOT:
+        ltp = change = change_pct = None
+        updated = now_utc.astimezone(ZoneInfo("Asia/Kolkata"))
+        try:
+            info = yf.Ticker(market["ticker"]).fast_info
+            ltp = float(info.get("last_price") or info.get("lastPrice"))
+            previous_close = float(info.get("previous_close") or info.get("previousClose"))
+            if previous_close:
+                change = ltp - previous_close
+                change_pct = (change / previous_close) * 100
+        except Exception:
+            pass
+        rows.append(
+            {
+                "name": market["name"],
+                "ltp": ltp,
+                "change": change,
+                "change_pct": change_pct,
+                "region": market["region"],
+                "status": "Live" if is_market_live(market, now_utc) else "Closed",
+                "updated": updated.strftime("%d %b, %I:%M %p").lstrip("0"),
+            }
+        )
+    return rows
+
+
+def render_market_snapshot() -> None:
+    rows = load_market_snapshot()
+    html_rows = []
+    for row in rows:
+        change = row["change"]
+        change_pct = row["change_pct"]
+        tone = "positive" if (change or 0) >= 0 else "negative"
+        ltp_text = f"{row['ltp']:,.2f}" if row["ltp"] is not None else "-"
+        change_text = f"{change:+,.2f} ({change_pct:+,.2f}%)" if change is not None and change_pct is not None else "-"
+        status_class = "live" if row["status"] == "Live" else "closed"
+        html_rows.append(
+            "<tr>"
+            f"<td>{html.escape(row['name'])}</td>"
+            f"<td class='numeric'><div>{ltp_text}</div><div class='{tone}'>{change_text}</div></td>"
+            f"<td>{html.escape(row['region'])}</td>"
+            f"<td><span class='dot {status_class}'></span>{html.escape(row['status'])}</td>"
+            f"<td>{html.escape(row['updated'])}</td>"
+            "</tr>"
+        )
+
+    st.subheader("Market Snapshot")
+    st.markdown(
+        """
+        <style>
+        .market-snapshot-table{
+            width:100%;
+            border-collapse:collapse;
+            border:1px solid #e5e7eb;
+            font-size:17px;
+        }
+        .market-snapshot-table th{
+            background:#eeeeee;
+            color:#333333;
+            text-align:left;
+            padding:16px 18px;
+            font-weight:500;
+        }
+        .market-snapshot-table td{
+            padding:14px 18px;
+            border-top:1px solid #f1f5f9;
+            color:#2f2f2f;
+        }
+        .market-snapshot-table tr:nth-child(even) td{
+            background:#fafafa;
+        }
+        .market-snapshot-table .numeric{
+            text-align:right;
+            font-size:20px;
+            line-height:1.28;
+        }
+        .market-snapshot-table .positive{
+            color:#0b8a3a;
+            font-size:15px;
+        }
+        .market-snapshot-table .negative{
+            color:#c21f0a;
+            font-size:15px;
+        }
+        .market-snapshot-table .dot{
+            display:inline-block;
+            width:12px;
+            height:12px;
+            border-radius:999px;
+            margin-right:18px;
+            background:#737373;
+            vertical-align:middle;
+        }
+        .market-snapshot-table .dot.live{
+            background:#087f3f;
+        }
+        </style>
+        <table class="market-snapshot-table">
+            <thead>
+                <tr>
+                    <th>Index</th>
+                    <th>LTP</th>
+                    <th>Region</th>
+                    <th>Status</th>
+                    <th>Last Updated</th>
+                </tr>
+            </thead>
+            <tbody>
+        """
+        + "".join(html_rows)
+        + """
+            </tbody>
+        </table>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def load_market_heatmap(minutes: int) -> list[dict]:
+    tickers = [market["ticker"] for market in MARKET_SNAPSHOT]
+    names_by_ticker = {market["ticker"]: market["name"] for market in MARKET_SNAPSHOT}
+    region_by_ticker = {market["ticker"]: market["region"] for market in MARKET_SNAPSHOT}
+    try:
+        data = yf.download(
+            tickers,
+            period="5d",
+            interval="5m",
+            progress=False,
+            threads=True,
+            auto_adjust=False,
+        )
+    except Exception:
+        data = pd.DataFrame()
+
+    if data.empty:
+        return [
+            {"name": market["name"], "region": market["region"], "change_pct": None}
+            for market in MARKET_SNAPSHOT
+        ]
+
+    close_data = data.get("Close", pd.DataFrame())
+    if isinstance(close_data, pd.Series):
+        close_data = close_data.to_frame(tickers[0])
+
+    rows = []
+    for ticker in tickers:
+        if ticker not in close_data:
+            rows.append({"name": names_by_ticker[ticker], "region": region_by_ticker[ticker], "change_pct": None})
+            continue
+        series = pd.to_numeric(close_data[ticker], errors="coerce").dropna()
+        if series.empty:
+            rows.append({"name": names_by_ticker[ticker], "region": region_by_ticker[ticker], "change_pct": None})
+            continue
+
+        latest_time = series.index[-1]
+        target_time = latest_time - pd.Timedelta(minutes=minutes)
+        previous = series[series.index <= target_time]
+        base = float(previous.iloc[-1] if not previous.empty else series.iloc[0])
+        latest = float(series.iloc[-1])
+        change_pct = ((latest - base) / base) * 100 if base else None
+        rows.append(
+            {
+                "name": names_by_ticker[ticker],
+                "region": region_by_ticker[ticker],
+                "change_pct": change_pct,
+            }
+        )
+    return rows
+
+
+def heatmap_color(change_pct: float | None) -> str:
+    if change_pct is None:
+        return "#6b7280"
+    strength = min(abs(change_pct) / 1.5, 1.0)
+    if change_pct >= 0:
+        lightness = 42 - int(strength * 22)
+        return f"hsl(138, 72%, {lightness}%)"
+    lightness = 42 - int(strength * 14)
+    return f"hsl(5, 62%, {lightness}%)"
+
+
+def render_market_heatmap() -> None:
+    st.subheader("Heatmap")
+    selected_window = st.radio(
+        "Heatmap window",
+        list(HEATMAP_WINDOWS.keys()),
+        index=0,
+        horizontal=True,
+        key="global_heatmap_window",
+    )
+    rows = load_market_heatmap(HEATMAP_WINDOWS[selected_window])
+    tiles = []
+    for row in rows:
+        value = row["change_pct"]
+        value_text = f"{value:+.2f}%" if value is not None else "-"
+        tiles.append(
+            f"""
+            <div class="market-heatmap-tile" style="background:{heatmap_color(value)}">
+                <div class="market-heatmap-name">{html.escape(row['name'])}</div>
+                <div class="market-heatmap-value">{value_text}</div>
+                <div class="market-heatmap-region">{html.escape(row['region'])}</div>
+            </div>
+            """
+        )
+
+    st.markdown(
+        """
+        <style>
+        .market-heatmap-grid{
+            display:grid;
+            grid-template-columns:repeat(4, minmax(160px, 1fr));
+            gap:4px;
+            margin-top:10px;
+        }
+        .market-heatmap-tile{
+            min-height:112px;
+            padding:22px 12px;
+            color:#ffffff;
+            display:flex;
+            flex-direction:column;
+            align-items:center;
+            justify-content:center;
+            text-align:center;
+            border:2px solid #ffffff;
+        }
+        .market-heatmap-name{
+            font-size:18px;
+            font-weight:700;
+            line-height:1.15;
+        }
+        .market-heatmap-value{
+            font-size:18px;
+            font-weight:800;
+            margin-top:4px;
+        }
+        .market-heatmap-region{
+            font-size:12px;
+            opacity:.82;
+            margin-top:8px;
+        }
+        @media (max-width: 900px){
+            .market-heatmap-grid{
+                grid-template-columns:repeat(2, minmax(140px, 1fr));
+            }
+        }
+        </style>
+        <div class="market-heatmap-grid">
+        """
+        + "".join(tiles)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 @st.cache_data(ttl=8, show_spinner=False)
@@ -817,3 +1107,6 @@ for col, spec, strike in zip(option_cols, [ce_chart_spec, pe_chart_spec], [selec
         st.subheader(spec["title"])
         render_strike_oi_summary(chain_df, strike)
         render_market_chart(spec, height=760)
+
+render_market_snapshot()
+render_market_heatmap()
