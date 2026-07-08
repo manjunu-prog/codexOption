@@ -33,6 +33,7 @@ class TradingChart:
         timeframe="",
         chart_id="",
         height=820,
+        **kwargs,
     ):
         index_html = self._read("index.html")
         css = self._read("chart.css")
