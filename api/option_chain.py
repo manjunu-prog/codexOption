@@ -7,6 +7,18 @@ from typing import Any
 import pandas as pd
 
 
+def _number_from_keys(item: dict[str, Any], keys: tuple[str, ...], default: float = 0.0) -> float:
+    for key in keys:
+        value = item.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
 class OptionChain:
     def __init__(self, client):
         self.client = client
@@ -33,8 +45,16 @@ class OptionChain:
                     "strike": int(float(item.get("strike_price", 0))),
                     "type": option_type,
                     "ltp": float(item.get("ltp", 0) or 0),
-                    "oi": int(item.get("oi", 0) or 0),
-                    "volume": int(item.get("volume", 0) or 0),
+                    "oi": int(_number_from_keys(item, ("oi", "open_interest", "openInterest"))),
+                    "oi_change": _number_from_keys(
+                        item,
+                        ("oich", "oi_chg", "oiChange", "change_oi", "changeinOpenInterest"),
+                    ),
+                    "oi_change_pct": _number_from_keys(
+                        item,
+                        ("oichp", "oi_chg_perc", "oiChangePct", "pchangeinOpenInterest"),
+                    ),
+                    "volume": int(_number_from_keys(item, ("volume", "vol"))),
                     "iv": float(item.get("iv", 0) or 0),
                     "delta": float(item.get("delta", 0) or 0),
                     "gamma": float(item.get("gamma", 0) or 0),
