@@ -183,7 +183,8 @@ class IndicatorEngine {
                     lastValueVisible: true,
                     title: level.label || "",
                     priceLineVisible: false,
-                    crosshairMarkerVisible: false
+                    crosshairMarkerVisible: false,
+                    autoscaleInfoProvider: () => null
                 });
                 line.setData([
                     {time: level.startTime, value: level.price},
