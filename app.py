@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 from streamlit_autorefresh import st_autorefresh
 
@@ -374,18 +375,19 @@ def render_market_heatmap() -> None:
         value = row["change_pct"]
         value_text = f"{value:+.2f}%" if value is not None else "-"
         tiles.append(
-            f"""
-            <div class="market-heatmap-tile" style="background:{heatmap_color(value)}">
-                <div class="market-heatmap-name">{html.escape(row['name'])}</div>
-                <div class="market-heatmap-value">{value_text}</div>
-                <div class="market-heatmap-region">{html.escape(row['region'])}</div>
-            </div>
-            """
+            (
+                f'<div class="market-heatmap-tile" style="background:{heatmap_color(value)}">'
+                f'<div class="market-heatmap-name">{html.escape(row["name"])}</div>'
+                f'<div class="market-heatmap-value">{value_text}</div>'
+                f'<div class="market-heatmap-region">{html.escape(row["region"])}</div>'
+                "</div>"
+            )
         )
 
-    st.markdown(
+    components.html(
         """
         <style>
+        body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;background:#ffffff;}
         .market-heatmap-grid{
             display:grid;
             grid-template-columns:repeat(4, minmax(160px, 1fr));
@@ -428,7 +430,8 @@ def render_market_heatmap() -> None:
         """
         + "".join(tiles)
         + "</div>",
-        unsafe_allow_html=True,
+        height=420,
+        scrolling=False,
     )
 
 
