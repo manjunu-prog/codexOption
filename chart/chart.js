@@ -169,7 +169,7 @@ class ChartEngine {
         if(priceScale && priceScale.subscribeVisiblePriceRangeChange){
             priceScale.subscribeVisiblePriceRangeChange((range)=>{
                 if(this.isViewStoreSuspended() || !range || !this.storageKey) return;
-                this.storeView({price: {from: range.from, to: range.to}});
+                this.storeView({});
             });
         }
 
@@ -302,8 +302,7 @@ class ChartEngine {
         if(this.isViewStoreSuspended()) return;
         const current = this.readStoredView() || {};
         const payload = JSON.stringify({
-            time: view.time || current.time,
-            price: view.price || current.price
+            time: view.time || current.time
         });
         try{ window.localStorage.setItem(this.storageKey, payload); }catch(e){}
         try{ window.sessionStorage.setItem(this.storageKey, payload); }catch(e){}
@@ -337,15 +336,8 @@ class ChartEngine {
             this.withSuspendedViewStore(()=>{
                 this.chart.timeScale().setVisibleLogicalRange(view.time);
                 const priceScale = this.chart.priceScale("right");
-                if(
-                    view.price &&
-                    Number.isFinite(view.price.from) &&
-                    Number.isFinite(view.price.to) &&
-                    view.price.to > view.price.from &&
-                    priceScale &&
-                    priceScale.setVisibleRange
-                ){
-                    priceScale.setVisibleRange(view.price);
+                if(priceScale){
+                    priceScale.applyOptions({autoScale:true});
                 }
             });
             return true;
@@ -360,14 +352,7 @@ class ChartEngine {
         try{
             const time = this.chart.timeScale().getVisibleLogicalRange();
             if(!time || !Number.isFinite(time.from) || !Number.isFinite(time.to)) return false;
-            const priceScale = this.chart.priceScale("right");
-            const price = priceScale && priceScale.getVisibleRange ? priceScale.getVisibleRange() : null;
-            return {
-                time,
-                price: price && Number.isFinite(price.from) && Number.isFinite(price.to) && price.to > price.from
-                    ? {from: price.from, to: price.to}
-                    : undefined
-            };
+            return {time};
         }catch(e){
             return false;
         }
@@ -447,7 +432,7 @@ class ChartEngine {
         const timeframeEl = document.getElementById("timeframe");
         if(symbolEl) symbolEl.textContent = symbol || "";
         if(timeframeEl) timeframeEl.textContent = timeframe || "";
-        this.storageKey = `OptionTerminal:v2:chart:${chartId || symbol || "symbol"}:${timeframe || "tf"}`;
+        this.storageKey = `OptionTerminal:v3:chart:${chartId || symbol || "symbol"}:${timeframe || "tf"}`;
 
     }
 
