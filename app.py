@@ -12,6 +12,7 @@ import yfinance as yf
 from streamlit_autorefresh import st_autorefresh
 
 from api.alerts import TelegramNotifier, app_login_code, format_signal_time, signal_key
+from api.candle_cache import SupabaseCandleCache
 from api.fyers_login import FyersLogin
 from api.historical import HistoricalData
 from api.option_chain import OptionChain
@@ -594,6 +595,16 @@ with st.sidebar:
         int(preference_number(preferences, "refresh_seconds", 30)),
         key="refresh_seconds",
     )
+
+    with st.expander("Data Maintenance", expanded=False):
+        reset_confirmed = st.checkbox("Confirm Supabase candle reset", key="reset_supabase_confirmed")
+        if st.button("Reset Supabase Data", disabled=not reset_confirmed, key="reset_supabase_data"):
+            ok, message = SupabaseCandleCache().reset_all()
+            if ok:
+                load_candles.clear()
+                st.success(message)
+            else:
+                st.error(message)
 
 credentials = credentials_from_sidebar()
 
