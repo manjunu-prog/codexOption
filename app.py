@@ -390,13 +390,13 @@ def render_market_heatmap() -> None:
         body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;background:#ffffff;}
         .market-heatmap-grid{
             display:grid;
-            grid-template-columns:repeat(4, minmax(160px, 1fr));
-            gap:4px;
-            margin-top:10px;
+            grid-template-columns:repeat(6, minmax(110px, 1fr));
+            gap:3px;
+            margin-top:6px;
         }
         .market-heatmap-tile{
-            min-height:112px;
-            padding:22px 12px;
+            min-height:58px;
+            padding:8px 8px;
             color:#ffffff;
             display:flex;
             flex-direction:column;
@@ -406,23 +406,23 @@ def render_market_heatmap() -> None:
             border:2px solid #ffffff;
         }
         .market-heatmap-name{
-            font-size:18px;
+            font-size:12px;
             font-weight:700;
             line-height:1.15;
         }
         .market-heatmap-value{
-            font-size:18px;
+            font-size:13px;
             font-weight:800;
-            margin-top:4px;
+            margin-top:2px;
         }
         .market-heatmap-region{
-            font-size:12px;
+            font-size:9px;
             opacity:.82;
-            margin-top:8px;
+            margin-top:3px;
         }
         @media (max-width: 900px){
             .market-heatmap-grid{
-                grid-template-columns:repeat(2, minmax(140px, 1fr));
+                grid-template-columns:repeat(3, minmax(90px, 1fr));
             }
         }
         </style>
@@ -430,7 +430,7 @@ def render_market_heatmap() -> None:
         """
         + "".join(tiles)
         + "</div>",
-        height=420,
+        height=150,
         scrolling=False,
     )
 
