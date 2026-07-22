@@ -119,6 +119,22 @@ class SupabaseCandleCache:
         except requests.RequestException:
             return
 
+    def reset_all(self) -> tuple[bool, str]:
+        if not self.enabled:
+            return False, "Supabase cache is not configured."
+        try:
+            response = requests.delete(
+                self.endpoint,
+                headers={**self.headers, "Prefer": "return=minimal"},
+                params={"timestamp": "gte.0"},
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            return False, f"Supabase reset failed: {exc}"
+        if response.status_code >= 400:
+            return False, f"Supabase reset failed ({response.status_code}): {response.text[:240]}"
+        return True, "Supabase candle cache reset complete."
+
     @property
     def endpoint(self) -> str:
         return f"{self.url}/rest/v1/{self.table}"
