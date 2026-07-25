@@ -594,7 +594,7 @@ with st.sidebar:
     refresh_seconds = st.slider(
         "Refresh seconds",
         5,
-        120,
+        360,
         int(preference_number(preferences, "refresh_seconds", 30)),
         key="refresh_seconds",
     )
