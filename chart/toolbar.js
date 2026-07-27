@@ -35,23 +35,28 @@ class Toolbar {
 
         if (!this.telegramButton) return;
 
-        const recipients = window.TelegramPhotoRecipients || [];
-        if (!recipients.length) {
-            this.telegramButton.disabled = true;
-            this.telegramButton.title = "Configure Telegram bot and chat credentials first";
-            return;
-        }
-
         this.telegramButton.addEventListener("click", async () => {
-            if (!window.html2canvas) {
-                this.setTelegramStatus("Screenshot library unavailable", true);
+            const recipients = window.TelegramPhotoRecipients || [];
+            if (!recipients.length) {
+                this.setTelegramStatus("Telegram not configured", true);
                 return;
             }
 
             this.telegramButton.disabled = true;
+            this.setTelegramStatus("Preparing...");
+            const html2canvas = await this.waitForScreenshotLibrary();
+            if (!html2canvas) {
+                this.setTelegramStatus("Screenshot library unavailable", true);
+                this.telegramButton.disabled = false;
+                return;
+            }
+
             this.setTelegramStatus("Sending...");
             try {
-                const canvas = await window.html2canvas(document.getElementById("terminal"), {
+                const target = document.getElementById("terminal");
+                if (!target) throw new Error("Chart container not found");
+
+                const canvas = await html2canvas(target, {
                     backgroundColor: "#ffffff",
                     scale: 2,
                     useCORS: true,
@@ -68,19 +73,41 @@ class Toolbar {
                     form.append("chat_id", recipient.chat_id);
                     form.append("caption", `${symbol} | ${timeframe}`);
                     form.append("photo", blob, "option-terminal-chart.png");
-                    const response = await fetch(`https://api.telegram.org/bot${recipient.token}/sendPhoto`, {
+                    await fetch(`https://api.telegram.org/bot${recipient.token}/sendPhoto`, {
                         method: "POST",
+                        mode: "no-cors",
                         body: form
                     });
-                    if (response.ok) sent += 1;
+                    sent += 1;
                 }
-                if (!sent) throw new Error("Telegram rejected the photo");
-                this.setTelegramStatus(`Sent to ${sent} chat${sent === 1 ? "" : "s"}`);
+                if (!sent) throw new Error("Telegram request failed");
+                this.setTelegramStatus(`Sent request to ${sent} chat${sent === 1 ? "" : "s"}`);
             } catch (error) {
                 this.setTelegramStatus(error.message || "Send failed", true);
             } finally {
                 this.telegramButton.disabled = false;
             }
+        });
+    }
+
+    waitForScreenshotLibrary() {
+        return new Promise(resolve => {
+            if (window.html2canvas) {
+                resolve(window.html2canvas);
+                return;
+            }
+
+            let checks = 0;
+            const timer = setInterval(() => {
+                checks += 1;
+                if (window.html2canvas) {
+                    clearInterval(timer);
+                    resolve(window.html2canvas);
+                } else if (checks >= 20) {
+                    clearInterval(timer);
+                    resolve(null);
+                }
+            }, 150);
         });
     }
 

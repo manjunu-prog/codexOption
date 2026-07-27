@@ -56,6 +56,14 @@ html,body{
     color:#fff;
 }
 
+#telegramStatus{
+    min-width:120px;
+    font-size:12px;
+    font-weight:600;
+    color:#64748b;
+    white-space:nowrap;
+}
+
 #chartContainer{
     flex:1;
     position:relative;
