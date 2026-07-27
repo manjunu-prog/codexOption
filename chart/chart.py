@@ -41,6 +41,10 @@ class TradingChart:
         toolbar_js = self._read("toolbar.js")
         drawings_js = self._read("drawings.js")
         indicators_js = self._read("indicators.js")
+        telegram_recipients = [
+            {"token": token, "chat_id": chat_id}
+            for token, chat_id in (kwargs.get("telegram_recipients") or [])
+        ]
 
         if ema and not emas:
             emas = [{"period": 20, "data": ema}]
@@ -83,6 +87,8 @@ window.addEventListener("load", function(){{
 <body>
 {index_html}
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script>window.TelegramPhotoRecipients = {json.dumps(telegram_recipients)};</script>
 <script>{chart_js}</script>
 <script>{toolbar_js}</script>
 <script>{drawings_js}</script>
