@@ -1,16 +1,11 @@
 """Option Terminal Pro."""
 
 import html
-import io
 import json
 from datetime import datetime, time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -580,150 +575,6 @@ def render_strike_oi_summary(chain_df: pd.DataFrame, strike: int | None) -> None
         )
 
 
-def _points_to_series(points: list[dict], index: pd.Index) -> pd.Series:
-    if not points:
-        return pd.Series(dtype=float)
-    rows = []
-    for point in points:
-        if point.get("time") is None or point.get("value") is None:
-            continue
-        timestamp = pd.to_datetime(int(point["time"]), unit="s", utc=True).tz_convert("Asia/Kolkata").tz_localize(None)
-        rows.append((timestamp, float(point["value"])))
-    if not rows:
-        return pd.Series(dtype=float)
-    series = pd.Series(dict(rows)).sort_index()
-    series = series[~series.index.duplicated(keep="last")]
-    return series.reindex(index, method="nearest", tolerance=pd.Timedelta("2h")).dropna()
-
-
-def chart_snapshot_png(df: pd.DataFrame, overlays: dict, spec: dict, chart_tf_label: str) -> bytes:
-    plot_df = df.tail(140).copy()
-    if plot_df.empty:
-        return b""
-
-    x_values = list(range(len(plot_df)))
-    fig, (ax, vol_ax) = plt.subplots(
-        2,
-        1,
-        figsize=(13, 7.4),
-        dpi=150,
-        sharex=True,
-        gridspec_kw={"height_ratios": [4, 1], "hspace": 0.03},
-    )
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
-    vol_ax.set_facecolor("white")
-
-    candle_width = 0.62
-    up_color = "#14a889"
-    down_color = "#ef4444"
-    for pos, row in zip(x_values, plot_df.itertuples()):
-        color = up_color if row.close >= row.open else down_color
-        ax.vlines(pos, row.low, row.high, color=color, linewidth=0.9, alpha=0.95)
-        body_low = min(row.open, row.close)
-        body_height = max(abs(row.close - row.open), 0.01)
-        ax.add_patch(
-            plt.Rectangle(
-                (pos - candle_width / 2, body_low),
-                candle_width,
-                body_height,
-                facecolor=color,
-                edgecolor=color,
-                linewidth=0.8,
-            )
-        )
-        volume = float(getattr(row, "volume", 0) or 0)
-        vol_ax.bar(pos, volume, color=color, width=candle_width, alpha=0.32)
-
-    for item in overlays.get("emas", []) or []:
-        period = item.get("period", "")
-        series = _points_to_series(item.get("data", []), plot_df.index)
-        if not series.empty:
-            ax.plot([plot_df.index.get_loc(idx) for idx in series.index], series.values, linewidth=1.4, label=f"EMA {period}")
-
-    vwap_points = overlays.get("vwap") or []
-    vwap_series = _points_to_series(vwap_points, plot_df.index)
-    if not vwap_series.empty:
-        ax.plot(
-            [plot_df.index.get_loc(idx) for idx in vwap_series.index],
-            vwap_series.values,
-            color="#00a65a",
-            linewidth=1.5,
-            label="VWAP",
-        )
-
-    alpha = overlays.get("alphatrend") or {}
-    alpha_lines = [
-        ("current", "#0022fc", "AT"),
-        ("lag", "#fc0400", "AT lag"),
-    ]
-    for key, color, label in alpha_lines:
-        series = _points_to_series(alpha.get(key, []), plot_df.index)
-        if not series.empty:
-            ax.plot([plot_df.index.get_loc(idx) for idx in series.index], series.values, color=color, linewidth=2.2, label=label)
-
-    cpr_levels = (overlays.get("cpr") or {}).get("levels", [])
-    visible_low = float(plot_df["low"].min())
-    visible_high = float(plot_df["high"].max())
-    visible_span = max(visible_high - visible_low, 1.0)
-    for level in cpr_levels:
-        price = float(level.get("price", float("nan")))
-        if not pd.notna(price) or not (visible_low - visible_span <= price <= visible_high + visible_span):
-            continue
-        color = level.get("color") or "#64748b"
-        label = str(level.get("label") or "")
-        style = "-" if label == "P" else "--"
-        ax.axhline(price, color=color, linewidth=1.1, linestyle=style, alpha=0.8)
-        ax.text(len(plot_df) - 1, price, f" {label}", color=color, fontsize=8, va="center", ha="left")
-
-    last = plot_df.iloc[-1]
-    title = (
-        f"{spec['label']} | {chart_tf_label} | "
-        f"O {last.open:,.2f} H {last.high:,.2f} L {last.low:,.2f} C {last.close:,.2f}"
-    )
-    ax.set_title(title, loc="left", fontsize=12, fontweight="bold", color="#111827")
-    ax.grid(True, color="#e5edf6", linewidth=0.8)
-    vol_ax.grid(True, axis="y", color="#eef2f7", linewidth=0.7)
-    ax.yaxis.tick_right()
-    vol_ax.yaxis.tick_right()
-    ax.tick_params(colors="#334155", labelsize=8)
-    vol_ax.tick_params(colors="#334155", labelsize=8)
-    for axis in (ax, vol_ax):
-        axis.spines["top"].set_visible(False)
-        axis.spines["left"].set_visible(False)
-        axis.spines["right"].set_color("#cbd5e1")
-        axis.spines["bottom"].set_color("#cbd5e1")
-
-    tick_step = max(1, len(plot_df) // 8)
-    tick_positions = x_values[::tick_step]
-    vol_ax.set_xticks(tick_positions)
-    vol_ax.set_xticklabels([plot_df.index[pos].strftime("%d %b %H:%M") for pos in tick_positions], rotation=0, ha="center")
-    if ax.get_legend_handles_labels()[0]:
-        ax.legend(loc="upper right", fontsize=8, frameon=False)
-
-    buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-    return buffer.getvalue()
-
-
-def send_chart_snapshot(spec: dict, display_df: pd.DataFrame, overlays: dict, chart_tf_label: str) -> None:
-    notifier = get_notifier()
-    if not notifier.enabled:
-        st.warning("Telegram is not configured.")
-        return
-    photo = chart_snapshot_png(display_df, overlays, spec, chart_tf_label)
-    if not photo:
-        st.warning("No chart data available for screenshot.")
-        return
-    caption = f"{spec['label']} | {chart_tf_label} | {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-    ok, message = notifier.send_photo(photo, caption=caption)
-    if ok:
-        st.success(message)
-    else:
-        st.error(message)
-
-
 with st.sidebar:
     st.header("Market")
     index_options = list(INDEX_CONFIG.keys())
@@ -1149,10 +1000,8 @@ def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, di
     nonce_key = f"refresh_nonce:{chart_id}"
     if nonce_key not in st.session_state:
         st.session_state[nonce_key] = 0
-    action_cols = st.columns([1, 1.2, 5])
-    if action_cols[0].button(f"Refresh {spec['title']}", key=f"refresh_button:{chart_id}"):
+    if st.button(f"Refresh {spec['title']}", key=f"refresh_button:{chart_id}"):
         st.session_state[nonce_key] += 1
-    send_photo_clicked = action_cols[1].button("Send Photo", key=f"telegram_photo:{chart_id}")
 
     try:
         chart_df = load_candles(client, spec["symbol"], TIMEFRAMES[chart_tf_label], days, st.session_state[nonce_key])
@@ -1172,8 +1021,6 @@ def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, di
         f"{spec['label']} | Last {last_row.close:,.2f} | "
         f"Delta {delta['delta']:,.0f} ({delta['delta_pct']:.1f}%) | Candles {len(display_df):,}"
     )
-    if send_photo_clicked:
-        send_chart_snapshot(spec, display_df, overlays, chart_tf_label)
     chart_args = {
         "candles": HistoricalData.candle_json(display_df),
         "volume": HistoricalData.volume_json(display_df),
@@ -1188,6 +1035,7 @@ def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, di
         "timeframe": chart_tf_label,
         "chart_id": chart_id,
         "height": height,
+        "telegram_recipients": get_notifier().recipients,
     }
     chart_args.pop("summary", None)
     TradingChart().render(**chart_args)
