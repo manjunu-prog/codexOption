@@ -11,3 +11,4 @@ python-dotenv>=1.0.1
 pytz>=2025.2
 orjson>=3.10.
 yfinance>=0.2.52
+matplotlib
