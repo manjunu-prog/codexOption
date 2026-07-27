@@ -167,6 +167,31 @@ class TelegramNotifier:
         if sent:
             self.store.mark_sent(signal_key, payload)
 
+    def send_photo(self, photo: bytes, caption: str = "") -> tuple[bool, str]:
+        if not self.enabled:
+            return False, "Telegram is not configured."
+
+        sent_count = 0
+        last_error = ""
+        for token, chat_id in self.recipients:
+            try:
+                response = requests.post(
+                    f"https://api.telegram.org/bot{token}/sendPhoto",
+                    data={"chat_id": chat_id, "caption": caption},
+                    files={"photo": ("chart.png", photo, "image/png")},
+                    timeout=20,
+                )
+                if response.status_code < 400:
+                    sent_count += 1
+                else:
+                    last_error = response.text
+            except requests.RequestException as exc:
+                last_error = str(exc)
+
+        if sent_count:
+            return True, f"Chart photo sent to {sent_count} Telegram chat(s)."
+        return False, last_error or "Telegram photo failed."
+
 
 def signal_key(*parts: object) -> str:
     raw = "|".join(str(part) for part in parts)
