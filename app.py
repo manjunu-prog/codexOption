@@ -154,7 +154,14 @@ def get_client(credentials: dict):
 
 
 @st.cache_data(ttl=20, show_spinner=False)
-def load_candles(_client, symbol: str, resolution: str, days: int, refresh_nonce: int = 0) -> pd.DataFrame:
+def load_candles(
+    _client,
+    symbol: str,
+    resolution: str,
+    days: int,
+    refresh_nonce: int = 0,
+    parser_version: str = "candle-parser-v3",
+) -> pd.DataFrame:
     return HistoricalData(client=_client).get_candles(symbol, resolution, days)
 
 
@@ -1017,9 +1024,11 @@ def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, di
     overlays = trim_overlays(build_overlays(chart_df), display_df)
     last_row = display_df.iloc[-1]
     delta = volume_delta(display_df.tail(80))
+    latest_candle_time = display_df.index.max().strftime("%d %b %H:%M")
     st.caption(
         f"{spec['label']} | Last {last_row.close:,.2f} | "
-        f"Delta {delta['delta']:,.0f} ({delta['delta_pct']:.1f}%) | Candles {len(display_df):,}"
+        f"Delta {delta['delta']:,.0f} ({delta['delta_pct']:.1f}%) | "
+        f"Candles {len(display_df):,} | Latest {latest_candle_time}"
     )
     chart_args = {
         "candles": HistoricalData.candle_json(display_df),
