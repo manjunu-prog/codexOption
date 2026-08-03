@@ -36,10 +36,24 @@ class HistoricalData:
 
         start = today - timedelta(days=days)
 
+        session_date = now_ist.date()
+        debug_messages = []
+
         cached_df = self.cache.get(symbol, timeframe, start, today)
         fetch_start = start
         if not cached_df.empty:
             fetch_start = cached_df.index.max().to_pydatetime() - timedelta(days=1)
+
+        if timeframe != "D":
+            today_df, today_message = self._get_today_by_date(symbol, timeframe, now_ist)
+            debug_messages.append(f"today-date: {today_message}")
+            if not self._has_session_date(today_df, session_date):
+                epoch_df, epoch_message = self._get_intraday_session(symbol, timeframe, now_ist)
+                debug_messages.append(f"today-epoch: {epoch_message}")
+                if self._has_session_date(epoch_df, session_date):
+                    today_df = epoch_df
+        else:
+            today_df = pd.DataFrame()
 
         payload = {
 
@@ -57,30 +71,69 @@ class HistoricalData:
 
         }
 
-        response = self.client.history(payload)
+        fresh_df, fresh_message = self._history_to_dataframe(payload)
+        debug_messages.append(f"range: {fresh_message}")
 
-        if response.get("s") != "ok":
+        if not today_df.empty:
+            fresh_df = pd.concat([fresh_df, today_df]) if not fresh_df.empty else today_df
+            fresh_df = self._dedupe(fresh_df)
 
-            raise Exception(
-                response.get(
-                    "message",
-                    "Unable to fetch historical data."
-                )
-            )
+        if fresh_df.empty and cached_df.empty:
+            raise Exception("Unable to fetch historical data. " + " | ".join(debug_messages))
 
-        fresh_df = self._to_dataframe(response["candles"])
-        if timeframe != "D":
-            today_df = self._get_intraday_session(symbol, timeframe, now_ist)
-            if not today_df.empty:
-                fresh_df = pd.concat([fresh_df, today_df]) if not fresh_df.empty else today_df
-                fresh_df = self._dedupe(fresh_df)
+        if not fresh_df.empty:
+            self.cache.upsert(symbol, timeframe, fresh_df)
+            self.cache.cleanup(keep_days=4)
 
-        self.cache.upsert(symbol, timeframe, fresh_df)
-        self.cache.cleanup(keep_days=4)
-
-        combined = pd.concat([cached_df, fresh_df]) if not cached_df.empty else fresh_df
+        combined = pd.concat([cached_df, fresh_df]) if not cached_df.empty and not fresh_df.empty else (
+            cached_df if fresh_df.empty else fresh_df
+        )
         combined = self._dedupe(combined)
+        combined.attrs["history_debug"] = " | ".join(debug_messages)
         return combined[combined.index >= pd.Timestamp(start)]
+
+    def _history_to_dataframe(self, payload: dict) -> tuple[pd.DataFrame, str]:
+        response = self.client.history(payload)
+        if response.get("s") != "ok":
+            message = response.get("message", "Unable to fetch historical data.")
+            return pd.DataFrame(), message
+
+        fresh_df = self._to_dataframe(response.get("candles", []))
+        return fresh_df, self._df_message(fresh_df)
+
+    def _get_today_by_date(self, symbol: str, timeframe: str, now_ist: datetime) -> tuple[pd.DataFrame, str]:
+        today = now_ist.strftime("%Y-%m-%d")
+        payload = {
+            "symbol": symbol,
+            "resolution": timeframe,
+            "date_format": "1",
+            "range_from": today,
+            "range_to": today,
+            "cont_flag": "1",
+        }
+        return self._history_to_dataframe(payload)
+
+    def _get_intraday_session(self, symbol: str, timeframe: str, now_ist: datetime) -> tuple[pd.DataFrame, str]:
+        session_start = datetime.combine(now_ist.date(), time(9, 15), tzinfo=ZoneInfo("Asia/Kolkata"))
+        payload = {
+            "symbol": symbol,
+            "resolution": timeframe,
+            "date_format": "0",
+            "range_from": str(int(session_start.timestamp())),
+            "range_to": str(int(now_ist.timestamp())),
+            "cont_flag": "1",
+        }
+        return self._history_to_dataframe(payload)
+
+    @staticmethod
+    def _df_message(df: pd.DataFrame) -> str:
+        if df.empty:
+            return "0 rows"
+        return f"{len(df)} rows latest {df.index.max().strftime('%d %b %H:%M')}"
+
+    @staticmethod
+    def _has_session_date(df: pd.DataFrame, session_date) -> bool:
+        return not df.empty and bool((df.index.date == session_date).any())
 
     # =====================================================
     # Today's Data
@@ -124,25 +177,6 @@ class HistoricalData:
         return self._to_dataframe(
             response["candles"]
         )
-
-    def _get_intraday_session(self, symbol: str, timeframe: str, now_ist: datetime) -> pd.DataFrame:
-        session_start = datetime.combine(now_ist.date(), time(9, 15), tzinfo=ZoneInfo("Asia/Kolkata"))
-        payload = {
-            "symbol": symbol,
-            "resolution": timeframe,
-            "date_format": "0",
-            "range_from": str(int(session_start.timestamp())),
-            "range_to": str(int(now_ist.timestamp())),
-            "cont_flag": "1",
-        }
-        response = self.client.history(payload)
-        if response.get("s") != "ok":
-            return pd.DataFrame()
-        return self._to_dataframe(response.get("candles", []))
-
-    @staticmethod
-    def _has_session_date(df: pd.DataFrame, session_date) -> bool:
-        return not df.empty and bool((df.index.date == session_date).any())
 
     # =====================================================
     # Last N Candles
