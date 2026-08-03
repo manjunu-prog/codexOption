@@ -69,7 +69,7 @@ class HistoricalData:
             )
 
         fresh_df = self._to_dataframe(response["candles"])
-        if timeframe != "D" and not self._has_session_date(fresh_df, today.date()):
+        if timeframe != "D":
             today_df = self._get_intraday_session(symbol, timeframe, now_ist)
             if not today_df.empty:
                 fresh_df = pd.concat([fresh_df, today_df]) if not fresh_df.empty else today_df
