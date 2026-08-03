@@ -142,27 +142,16 @@ class HistoricalData:
     @staticmethod
     def _to_dataframe(candles):
 
-        df = pd.DataFrame(
+        columns = ["timestamp", "open", "high", "low", "close", "volume"]
+        rows = []
+        for candle in candles or []:
+            if not isinstance(candle, (list, tuple)) or len(candle) < len(columns):
+                continue
+            rows.append(list(candle[: len(columns)]))
 
-            candles,
-
-            columns=[
-
-                "timestamp",
-
-                "open",
-
-                "high",
-
-                "low",
-
-                "close",
-
-                "volume"
-
-            ]
-
-        )
+        df = pd.DataFrame(rows, columns=columns)
+        if df.empty:
+            return df
 
         df["datetime"] = pd.to_datetime(
 
