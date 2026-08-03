@@ -23,6 +23,7 @@ from indicators.core import angle_market, alphatrend, cpr, ema, fvg_ifvg_order_b
 
 st.set_page_config(page_title=APP_NAME, layout="wide")
 
+APP_BUILD = "2026-08-03-candle-v4"
 DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 PREFERENCES_FILE = DATA_DIR / "last_activity.json"
@@ -126,6 +127,7 @@ def require_login() -> None:
 
 require_login()
 st.title("Option Terminal Pro")
+st.caption(f"Build {APP_BUILD}")
 preferences = load_preferences()
 
 
@@ -160,7 +162,7 @@ def load_candles(
     resolution: str,
     days: int,
     refresh_nonce: int = 0,
-    parser_version: str = "candle-parser-v3",
+    parser_version: str = APP_BUILD,
 ) -> pd.DataFrame:
     return HistoricalData(client=_client).get_candles(symbol, resolution, days)
 
@@ -1013,7 +1015,7 @@ def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, di
     try:
         chart_df = load_candles(client, spec["symbol"], TIMEFRAMES[chart_tf_label], days, st.session_state[nonce_key])
     except Exception as exc:
-        st.error(f"{spec['label']} candles failed: {exc}")
+        st.error(f"{spec['label']} candles failed [{APP_BUILD}]: {exc}")
         return None, None
 
     if chart_df.empty:
