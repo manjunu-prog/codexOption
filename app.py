@@ -23,7 +23,7 @@ from indicators.core import angle_market, alphatrend, cpr, ema, fvg_ifvg_order_b
 
 st.set_page_config(page_title=APP_NAME, layout="wide")
 
-APP_BUILD = "2026-08-03-candle-v4"
+APP_BUILD = "2026-08-03-candle-v5"
 DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 PREFERENCES_FILE = DATA_DIR / "last_activity.json"
@@ -189,6 +189,13 @@ def is_market_live(market: dict, now_utc: datetime) -> bool:
     if local_now.weekday() >= 5:
         return False
     return market["open"] <= local_now.time() <= market["close"]
+
+
+def is_india_market_live(now_ist: datetime | None = None) -> bool:
+    now_ist = now_ist or datetime.now(ZoneInfo("Asia/Kolkata"))
+    if now_ist.weekday() >= 5:
+        return False
+    return time(9, 15) <= now_ist.time() <= time(15, 30)
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -955,6 +962,9 @@ def build_overlays(df: pd.DataFrame) -> dict:
 def latest_session_df(df: pd.DataFrame, chart_tf_label: str) -> pd.DataFrame:
     if df.empty or TIMEFRAMES[chart_tf_label] == "D":
         return df
+    today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    if is_india_market_live() and bool((df.index.date == today_ist).any()):
+        return df[df.index.date == today_ist]
     latest_date = df.index.max().date()
     return df[df.index.date == latest_date]
 
@@ -1021,6 +1031,19 @@ def render_market_chart(spec: dict, height: int = 520) -> tuple[pd.DataFrame, di
     if chart_df.empty:
         st.warning(f"{spec['label']} returned no candles.")
         return None, None
+
+    chart_resolution = TIMEFRAMES[chart_tf_label]
+    if latest_session_only and chart_resolution != "D":
+        today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        latest_available = chart_df.index.max()
+        if is_india_market_live() and latest_available.date() < today_ist:
+            debug = chart_df.attrs.get("history_debug", "")
+            details = f" Fyers debug: {debug}" if debug else ""
+            st.error(
+                f"{spec['label']} has no candles for today's session yet. "
+                f"Latest available candle is {latest_available.strftime('%d %b %H:%M')}.{details}"
+            )
+            return None, None
 
     display_df = latest_session_df(chart_df, chart_tf_label) if latest_session_only else chart_df
     overlays = trim_overlays(build_overlays(chart_df), display_df)
