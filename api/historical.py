@@ -5,7 +5,8 @@ Historical Data Engine
 =========================================================
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
 import pandas as pd
 
 from api.candle_cache import SupabaseCandleCache
@@ -30,7 +31,8 @@ class HistoricalData:
         days=5
     ):
 
-        today = datetime.now()
+        now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+        today = now_ist.replace(tzinfo=None)
 
         start = today - timedelta(days=days)
 
@@ -67,6 +69,12 @@ class HistoricalData:
             )
 
         fresh_df = self._to_dataframe(response["candles"])
+        if timeframe != "D" and not self._has_session_date(fresh_df, today.date()):
+            today_df = self._get_intraday_session(symbol, timeframe, now_ist)
+            if not today_df.empty:
+                fresh_df = pd.concat([fresh_df, today_df]) if not fresh_df.empty else today_df
+                fresh_df = self._dedupe(fresh_df)
+
         self.cache.upsert(symbol, timeframe, fresh_df)
         self.cache.cleanup(keep_days=4)
 
@@ -84,7 +92,7 @@ class HistoricalData:
         timeframe="5"
     ):
 
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
 
         payload = {
 
@@ -117,6 +125,25 @@ class HistoricalData:
             response["candles"]
         )
 
+    def _get_intraday_session(self, symbol: str, timeframe: str, now_ist: datetime) -> pd.DataFrame:
+        session_start = datetime.combine(now_ist.date(), time(9, 15), tzinfo=ZoneInfo("Asia/Kolkata"))
+        payload = {
+            "symbol": symbol,
+            "resolution": timeframe,
+            "date_format": "0",
+            "range_from": str(int(session_start.timestamp())),
+            "range_to": str(int(now_ist.timestamp())),
+            "cont_flag": "1",
+        }
+        response = self.client.history(payload)
+        if response.get("s") != "ok":
+            return pd.DataFrame()
+        return self._to_dataframe(response.get("candles", []))
+
+    @staticmethod
+    def _has_session_date(df: pd.DataFrame, session_date) -> bool:
+        return not df.empty and bool((df.index.date == session_date).any())
+
     # =====================================================
     # Last N Candles
     # =====================================================
@@ -145,9 +172,12 @@ class HistoricalData:
         columns = ["timestamp", "open", "high", "low", "close", "volume"]
         rows = []
         for candle in candles or []:
-            if not isinstance(candle, (list, tuple)) or len(candle) < len(columns):
-                continue
-            rows.append(list(candle[: len(columns)]))
+            if isinstance(candle, dict):
+                if not all(column in candle for column in columns):
+                    continue
+                rows.append([candle[column] for column in columns])
+            elif isinstance(candle, (list, tuple)) and len(candle) >= len(columns):
+                rows.append(list(candle[: len(columns)]))
 
         df = pd.DataFrame(rows, columns=columns)
         if df.empty:
