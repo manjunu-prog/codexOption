@@ -103,26 +103,12 @@ def angle_market(
         return {"lines": [], "labels": []}
 
     rows = clean.reset_index().rename(columns={clean.reset_index().columns[0]: "datetime"})
-    atr = _atr(clean, 200).reset_index(drop=True)
     lines: list[dict] = []
     labels: list[dict] = []
     highs: list[dict] = []
     lows: list[dict] = []
-    ph_val: float | None = None
-    ph_point: dict | None = None
-    pl_val: float | None = None
-    pl_point: dict | None = None
-    count_up = 0
-    count_down = 0
-    latest_deviation: list[dict] = []
 
     for i, row in rows.iterrows():
-        time_value = int(row["datetime"].timestamp())
-        high = float(row["high"])
-        low = float(row["low"])
-        step = float(atr.iloc[min(i, len(atr) - 1)] or 0) * float(angle)
-        deviation = float(atr.iloc[min(i, len(atr) - 1)] or 0) * float(deviation_size)
-
         pivot_index = i - length
         if pivot_index >= length and i >= length * 2:
             window = rows.iloc[pivot_index - length : pivot_index + length + 1]
@@ -135,82 +121,115 @@ def angle_market(
                 structure = "HH" if highs and pivot_high > highs[-1]["price"] else "LH" if highs else "H"
                 point = {"index": pivot_index, "time": pivot_time, "price": pivot_high, "structure": structure}
                 highs.append(point)
-                ph_val = pivot_high
-                ph_point = point
                 labels.append(_angle_label(point, "anglePivotHigh", "#14b8a6"))
+                if len(highs) >= 2:
+                    line, breakout_label = _project_angle_line(
+                        rows,
+                        highs[-2],
+                        highs[-1],
+                        side="high",
+                    )
+                    if line:
+                        lines.append(line)
+                    if breakout_label:
+                        labels.append(breakout_label)
 
             if pivot_low == float(window["low"].min()):
                 structure = "HL" if lows and pivot_low > lows[-1]["price"] else "LL" if lows else "L"
                 point = {"index": pivot_index, "time": pivot_time, "price": pivot_low, "structure": structure}
                 lows.append(point)
-                pl_val = pivot_low
-                pl_point = point
                 labels.append(_angle_label(point, "anglePivotLow", "#be185d"))
+                if len(lows) >= 2:
+                    line, breakdown_label = _project_angle_line(
+                        rows,
+                        lows[-2],
+                        lows[-1],
+                        side="low",
+                    )
+                    if line:
+                        lines.append(line)
+                    if breakdown_label:
+                        labels.append(breakdown_label)
 
-        if ph_val is not None and ph_point is not None:
-            ph_val -= step
-            if high > ph_val:
-                count_up += 1
-                count_down = 0
-                lines.append(
-                    {
-                        "startTime": ph_point["time"],
-                        "startPrice": ph_point["price"],
-                        "endTime": time_value,
-                        "endPrice": ph_val,
-                        "color": "#14b8a6",
-                        "width": 2,
-                    }
-                )
-                labels.append(
-                    {
-                        "time": ph_point["time"],
-                        "price": ph_point["price"],
-                        "text": f"{ph_point['structure']} {count_up}",
-                        "tone": "angleHigh",
-                    }
-                )
-                latest_deviation = _angle_deviation_lines(time_value, ph_val, deviation, "up")
-                ph_val = None
-                ph_point = None
+    for swing_index, point in enumerate(highs, start=1):
+        labels.append(
+            {
+                "time": point["time"],
+                "price": point["price"],
+                "text": f"{point['structure']} {swing_index}",
+                "tone": "angleHigh",
+            }
+        )
 
-        if pl_val is not None and pl_point is not None:
-            pl_val += step
-            if low < pl_val:
-                count_down += 1
-                count_up = 0
-                lines.append(
-                    {
-                        "startTime": pl_point["time"],
-                        "startPrice": pl_point["price"],
-                        "endTime": time_value,
-                        "endPrice": pl_val,
-                        "color": "#be185d",
-                        "width": 2,
-                    }
-                )
-                labels.append(
-                    {
-                        "time": pl_point["time"],
-                        "price": pl_point["price"],
-                        "text": f"{pl_point['structure']} {count_down}",
-                        "tone": "angleLow",
-                    }
-                )
-                latest_deviation = _angle_deviation_lines(time_value, pl_val, deviation, "down")
-                pl_val = None
-                pl_point = None
-
-    last_time = int(clean.index[-1].timestamp())
-    future_time = last_time + (_infer_time_step([int(ts.timestamp()) for ts in clean.index]) * 5)
-    for item in latest_deviation:
-        item["endTime"] = future_time
-        item["labelTime"] = future_time
+    for swing_index, point in enumerate(lows, start=1):
+        labels.append(
+            {
+                "time": point["time"],
+                "price": point["price"],
+                "text": f"{point['structure']} {swing_index}",
+                "tone": "angleLow",
+            }
+        )
 
     return {
-        "lines": lines[-80:] + latest_deviation,
+        "lines": lines[-80:],
         "labels": labels[-160:],
     }
+
+
+def _project_angle_line(rows: pd.DataFrame, first: dict, second: dict, side: str) -> tuple[dict | None, dict | None]:
+    if second["index"] <= first["index"]:
+        return None, None
+
+    slope = (second["price"] - first["price"]) / (second["index"] - first["index"])
+    if side == "high" and slope >= 0:
+        return None, None
+    if side == "low" and slope <= 0:
+        return None, None
+
+    end_index = len(rows) - 1
+    breakout_label = None
+    previous_close = None
+    previous_projected = None
+
+    for j in range(second["index"] + 1, len(rows)):
+        projected = first["price"] + slope * (j - first["index"])
+        close = float(rows.iloc[j]["close"])
+        crossed_up = (
+            side == "high"
+            and close > projected
+            and (previous_close is None or previous_projected is None or previous_close <= previous_projected)
+        )
+        crossed_down = (
+            side == "low"
+            and close < projected
+            and (previous_close is None or previous_projected is None or previous_close >= previous_projected)
+        )
+        if crossed_up or crossed_down:
+            end_index = min(j + 3, len(rows) - 1)
+            breakout_label = {
+                "time": int(rows.iloc[j]["datetime"].timestamp()),
+                "price": projected,
+                "text": "Breakout" if crossed_up else "Breakdown",
+                "tone": "angleBreakout" if crossed_up else "angleBreakdown",
+            }
+            break
+        previous_close = close
+        previous_projected = projected
+
+    end_row = rows.iloc[end_index]
+    end_price = first["price"] + slope * (end_index - first["index"])
+    return (
+        {
+            "startTime": int(first["time"]),
+            "startPrice": float(first["price"]),
+            "endTime": int(end_row["datetime"].timestamp()),
+            "endPrice": float(end_price),
+            "color": "#ff2d16" if side == "high" else "#be185d",
+            "width": 2,
+        },
+        breakout_label,
+    )
 
 
 def _angle_label(point: dict, tone: str, color: str) -> dict:
