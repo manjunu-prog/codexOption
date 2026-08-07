@@ -219,10 +219,12 @@ class IndicatorEngine {
                 !Number.isFinite(item.endPrice)
             ) return;
 
+            const slope = Number(item.endPrice) - Number(item.startPrice);
+            const lineColor = slope >= 0 ? "#14b8a6" : "#ff2d16";
             let line = null;
             this.withChartViewProtected(()=>{
                 line = this.chart.addLineSeries({
-                    color: item.color || "#14b8a6",
+                    color: lineColor,
                     lineWidth: item.width || 2,
                     lineStyle: item.style === "dashed" ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
                     lastValueVisible: false,
@@ -237,7 +239,11 @@ class IndicatorEngine {
             this.series[`ANGLE_${index}`] = line;
         });
 
-        this.setLabels("angle", data && data.labels ? data.labels : []);
+        const labels = (data && data.labels ? data.labels : []).filter(label=>{
+            const text = String(label && label.text ? label.text : "").toLowerCase();
+            return text !== "breakout" && text !== "breakdown";
+        });
+        this.setLabels("angle", labels);
 
     }
 
