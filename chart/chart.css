@@ -180,23 +180,6 @@ html,body{
     font-size:13px;
 }
 
-.indicatorLabel.angle.angleBreakout,
-.indicatorLabel.angle.angleBreakdown{
-    padding:3px 7px;
-    border-radius:5px;
-    color:#ffffff;
-    text-shadow:none;
-    transform:translate(8px,-120%);
-}
-
-.indicatorLabel.angle.angleBreakout{
-    background:#ff2d16;
-}
-
-.indicatorLabel.angle.angleBreakdown{
-    background:#be185d;
-}
-
 .indicatorLabel.angle.anglePivotHigh,
 .indicatorLabel.angle.anglePivotLow{
     width:26px;
