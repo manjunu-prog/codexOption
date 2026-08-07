@@ -123,7 +123,7 @@ def angle_market(
                 highs.append(point)
                 labels.append(_angle_label(point, "anglePivotHigh", "#14b8a6"))
                 if len(highs) >= 2:
-                    line, breakout_label = _project_angle_line(
+                    line = _project_angle_line(
                         rows,
                         highs[-2],
                         highs[-1],
@@ -131,8 +131,6 @@ def angle_market(
                     )
                     if line:
                         lines.append(line)
-                    if breakout_label:
-                        labels.append(breakout_label)
 
             if pivot_low == float(window["low"].min()):
                 structure = "HL" if lows and pivot_low > lows[-1]["price"] else "LL" if lows else "L"
@@ -140,7 +138,7 @@ def angle_market(
                 lows.append(point)
                 labels.append(_angle_label(point, "anglePivotLow", "#be185d"))
                 if len(lows) >= 2:
-                    line, breakdown_label = _project_angle_line(
+                    line = _project_angle_line(
                         rows,
                         lows[-2],
                         lows[-1],
@@ -148,8 +146,6 @@ def angle_market(
                     )
                     if line:
                         lines.append(line)
-                    if breakdown_label:
-                        labels.append(breakdown_label)
 
     for swing_index, point in enumerate(highs, start=1):
         labels.append(
@@ -177,18 +173,17 @@ def angle_market(
     }
 
 
-def _project_angle_line(rows: pd.DataFrame, first: dict, second: dict, side: str) -> tuple[dict | None, dict | None]:
+def _project_angle_line(rows: pd.DataFrame, first: dict, second: dict, side: str) -> dict | None:
     if second["index"] <= first["index"]:
-        return None, None
+        return None
 
     slope = (second["price"] - first["price"]) / (second["index"] - first["index"])
     if side == "high" and slope >= 0:
-        return None, None
+        return None
     if side == "low" and slope <= 0:
-        return None, None
+        return None
 
     end_index = len(rows) - 1
-    breakout_label = None
     previous_close = None
     previous_projected = None
 
@@ -207,29 +202,20 @@ def _project_angle_line(rows: pd.DataFrame, first: dict, second: dict, side: str
         )
         if crossed_up or crossed_down:
             end_index = min(j + 3, len(rows) - 1)
-            breakout_label = {
-                "time": int(rows.iloc[j]["datetime"].timestamp()),
-                "price": projected,
-                "text": "Breakout" if crossed_up else "Breakdown",
-                "tone": "angleBreakout" if crossed_up else "angleBreakdown",
-            }
             break
         previous_close = close
         previous_projected = projected
 
     end_row = rows.iloc[end_index]
     end_price = first["price"] + slope * (end_index - first["index"])
-    return (
-        {
-            "startTime": int(first["time"]),
-            "startPrice": float(first["price"]),
-            "endTime": int(end_row["datetime"].timestamp()),
-            "endPrice": float(end_price),
-            "color": "#ff2d16" if side == "high" else "#be185d",
-            "width": 2,
-        },
-        breakout_label,
-    )
+    return {
+        "startTime": int(first["time"]),
+        "startPrice": float(first["price"]),
+        "endTime": int(end_row["datetime"].timestamp()),
+        "endPrice": float(end_price),
+        "color": "#ff2d16" if side == "high" else "#14b8a6",
+        "width": 2,
+    }
 
 
 def _angle_label(point: dict, tone: str, color: str) -> dict:
