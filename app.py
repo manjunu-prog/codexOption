@@ -1089,15 +1089,13 @@ st.subheader(index_chart_spec["title"])
 render_index_oi_summary(chain_df)
 render_market_chart(index_chart_spec, height=760)
 
-option_cols = st.columns(2)
-for col, spec, strike in zip(option_cols, [ce_chart_spec, pe_chart_spec], [selected_ce_strike, selected_pe_strike]):
-    with col:
-        if not spec:
-            st.info("Option chart is unavailable for the selected strike.")
-            continue
-        st.subheader(spec["title"])
-        render_strike_oi_summary(chain_df, strike)
-        render_market_chart(spec, height=760)
+for spec, strike in [(ce_chart_spec, selected_ce_strike), (pe_chart_spec, selected_pe_strike)]:
+    if not spec:
+        st.info("Option chart is unavailable for the selected strike.")
+        continue
+    st.subheader(spec["title"])
+    render_strike_oi_summary(chain_df, strike)
+    render_market_chart(spec, height=760)
 
 render_market_snapshot()
 render_market_heatmap()
