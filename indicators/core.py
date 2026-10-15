@@ -23,6 +23,182 @@ def vwap(df: pd.DataFrame) -> list[dict]:
     return _clean_line(values)
 
 
+def volume_poc_profile(df: pd.DataFrame, bins: int = 28, max_levels: int = 3) -> dict[str, list[dict]]:
+    clean = df[~df.index.duplicated(keep="last")].sort_index()
+    if clean.empty or "volume" not in clean:
+        return {"levels": []}
+
+    work = pd.DataFrame(
+        {
+            "high": pd.to_numeric(clean["high"], errors="coerce"),
+            "low": pd.to_numeric(clean["low"], errors="coerce"),
+            "volume": pd.to_numeric(clean["volume"], errors="coerce").fillna(0),
+        },
+        index=clean.index,
+    ).dropna(subset=["high", "low"])
+    work = work[work["volume"] > 0]
+    if work.empty:
+        return {"levels": []}
+
+    price_low = float(work["low"].min())
+    price_high = float(work["high"].max())
+    if not pd.notna(price_low) or not pd.notna(price_high):
+        return {"levels": []}
+    if price_high <= price_low:
+        start_time = int(work.index[0].timestamp())
+        end_time = int(work.index[-1].timestamp())
+        return {
+            "levels": [
+                _volume_poc_level("Present POC", price_low, start_time, end_time, "present"),
+            ]
+        }
+
+    bucket_count = max(8, min(int(bins or 28), 80))
+    bucket_size = (price_high - price_low) / bucket_count
+    profile = [0.0 for _ in range(bucket_count)]
+    segments: list[dict] = []
+    active_bucket: int | None = None
+    active_start = int(work.index[0].timestamp())
+    last_time = active_start
+    step_seconds = _infer_time_step_seconds(work.index)
+
+    for ts, row in work.iterrows():
+        low = float(row["low"])
+        high = float(row["high"])
+        volume = float(row["volume"])
+        start_bucket = max(0, min(bucket_count - 1, int((low - price_low) / bucket_size)))
+        end_bucket = max(0, min(bucket_count - 1, int((high - price_low) / bucket_size)))
+        if end_bucket < start_bucket:
+            start_bucket, end_bucket = end_bucket, start_bucket
+
+        share = volume / (end_bucket - start_bucket + 1)
+        for bucket in range(start_bucket, end_bucket + 1):
+            profile[bucket] += share
+
+        current_bucket = max(range(bucket_count), key=lambda bucket: profile[bucket])
+        current_time = int(ts.timestamp())
+        if active_bucket is None:
+            active_bucket = current_bucket
+            active_start = current_time
+        elif current_bucket != active_bucket:
+            segments.append(
+                {
+                    "bucket": active_bucket,
+                    "startTime": active_start,
+                    "endTime": current_time,
+                }
+            )
+            active_bucket = current_bucket
+            active_start = current_time
+        last_time = current_time
+
+    if active_bucket is not None:
+        segments.append(
+            {
+                "bucket": active_bucket,
+                "startTime": active_start,
+                "endTime": max(last_time + step_seconds, active_start + step_seconds),
+            }
+        )
+
+    recent = segments[-max(1, int(max_levels or 3)) :]
+    levels = []
+    previous_total = max(0, len(recent) - 1)
+    for index, segment in enumerate(recent):
+        price = price_low + ((segment["bucket"] + 0.5) * bucket_size)
+        is_present = index == len(recent) - 1
+        label = "Present POC" if is_present else f"Previous POC {previous_total - index}"
+        levels.append(
+            _volume_poc_level(
+                label,
+                price,
+                segment["startTime"],
+                segment["endTime"],
+                "present" if is_present else "previous",
+            )
+        )
+
+    return {"levels": levels}
+
+
+def _infer_time_step_seconds(index: pd.Index) -> int:
+    timestamps = [int(ts.timestamp()) for ts in index]
+    deltas = [
+        current - previous
+        for previous, current in zip(timestamps, timestamps[1:])
+        if current > previous
+    ]
+    if not deltas:
+        return 300
+    deltas.sort()
+    return max(60, int(deltas[len(deltas) // 2]))
+
+
+def volume_area_pressure(df: pd.DataFrame, bins: int = 28) -> dict:
+    """Compare up/down candle volume inside the highest-volume price area."""
+    clean = df[~df.index.duplicated(keep="last")].sort_index()
+    required = {"open", "high", "low", "close", "volume"}
+    empty = {"upVolume": 0.0, "downVolume": 0.0, "ratio": None, "dominant": "neutral", "pocPrice": None}
+    if clean.empty or not required.issubset(clean.columns):
+        return empty
+
+    work = clean[list(required)].apply(pd.to_numeric, errors="coerce").dropna()
+    work = work[work["volume"] > 0]
+    if work.empty:
+        return empty
+
+    price_low = float(work["low"].min())
+    price_high = float(work["high"].max())
+    if price_high <= price_low:
+        area_low, area_high = price_low, price_high
+    else:
+        bucket_count = max(8, min(int(bins or 28), 80))
+        bucket_size = (price_high - price_low) / bucket_count
+        profile = [0.0] * bucket_count
+        for _, row in work.iterrows():
+            start = max(0, min(bucket_count - 1, int((float(row["low"]) - price_low) / bucket_size)))
+            end = max(0, min(bucket_count - 1, int((float(row["high"]) - price_low) / bucket_size)))
+            if end < start:
+                start, end = end, start
+            share = float(row["volume"]) / (end - start + 1)
+            for bucket in range(start, end + 1):
+                profile[bucket] += share
+        poc_bucket = max(range(bucket_count), key=lambda bucket: profile[bucket])
+        area_low = price_low + (poc_bucket * bucket_size)
+        area_high = area_low + bucket_size
+
+    typical = (work["high"] + work["low"] + work["close"]) / 3
+    area = work[(typical >= area_low) & (typical <= area_high)]
+    if area.empty:
+        area = work
+    up_volume = float(area.loc[area["close"] >= area["open"], "volume"].sum())
+    down_volume = float(area.loc[area["close"] < area["open"], "volume"].sum())
+    dominant = "buying" if up_volume > down_volume else "selling" if down_volume > up_volume else "neutral"
+    leading = max(up_volume, down_volume)
+    trailing = min(up_volume, down_volume)
+    return {
+        "upVolume": up_volume,
+        "downVolume": down_volume,
+        "ratio": (leading / trailing) if trailing else None,
+        "dominant": dominant,
+        "pocPrice": float((area_low + area_high) / 2),
+    }
+
+
+def _volume_poc_level(label: str, price: float, start_time: int, end_time: int, kind: str) -> dict:
+    return {
+        "label": label,
+        "price": float(price),
+        "startTime": int(start_time),
+        "endTime": int(end_time),
+        "labelTime": int(end_time),
+        "kind": kind,
+        "color": "#111827" if kind == "present" else "#64748b",
+        "width": 3 if kind == "present" else 2,
+        "style": "solid" if kind == "present" else "dashed",
+    }
+
+
 def cpr(df: pd.DataFrame, show_pivots: bool = True) -> dict[str, list[dict]]:
     clean = df[~df.index.duplicated(keep="last")].sort_index()
     if clean.empty:
@@ -483,6 +659,18 @@ def fvg_ifvg_order_blocks(
                     text="rgba(74,222,128,0.95)",
                     border_style="dashed",
                 )
+                zone["formationTime"] = time_at(i)
+                zone["originalDirection"] = "bullish"
+                cisd = _fvg_cisd_signal(
+                    direction="bullish",
+                    middle_open=float(middle["open"]),
+                    middle_close=float(middle["close"]),
+                    current_close=close,
+                    time_value=time_at(i),
+                    price=low,
+                )
+                if cisd:
+                    zone["cisd"] = cisd
                 zones.append(zone)
                 active_fvgs.append(zone)
 
@@ -500,6 +688,18 @@ def fvg_ifvg_order_blocks(
                     text="rgba(248,113,113,0.95)",
                     border_style="dashed",
                 )
+                zone["formationTime"] = time_at(i)
+                zone["originalDirection"] = "bearish"
+                cisd = _fvg_cisd_signal(
+                    direction="bearish",
+                    middle_open=float(middle["open"]),
+                    middle_close=float(middle["close"]),
+                    current_close=close,
+                    time_value=time_at(i),
+                    price=high,
+                )
+                if cisd:
+                    zone["cisd"] = cisd
                 zones.append(zone)
                 active_fvgs.append(zone)
 
@@ -571,6 +771,117 @@ def fvg_ifvg_order_blocks(
                 active_fvgs.remove(zone)
 
     return zones[-max_zones:]
+
+
+def _fvg_cisd_signal(
+    direction: str,
+    middle_open: float,
+    middle_close: float,
+    current_close: float,
+    time_value: int,
+    price: float,
+) -> dict | None:
+    """Return a CISD only when the FVG is formed with a delivery change.
+
+    A bullish CISD is a close above the open of the preceding bearish candle;
+    a bearish CISD is the inverse. This keeps the signal tied to the FVG's
+    creation candle instead of detecting later breaks inside the gap.
+    """
+    bullish = direction == "bullish" and middle_close <= middle_open and current_close > middle_open
+    bearish = direction == "bearish" and middle_close >= middle_open and current_close < middle_open
+    if not (bullish or bearish):
+        return None
+    return {
+        "time": int(time_value),
+        "price": float(price),
+        "direction": direction,
+        "label": "CISD BULL" if bullish else "CISD BEAR",
+    }
+
+
+def smart_money_callouts(
+    df: pd.DataFrame,
+    fvg_zones: list[dict] | None = None,
+    structure_lookback: int = 9,
+    liquidity_lookback: int = 30,
+) -> list[dict]:
+    """Find full-sequence BUY/SELL confluence callouts.
+
+    BUY: prior bearish FVG -> sell-side liquidity sweep -> bullish CHoCH/MSS
+    -> bullish FVG. SELL is the exact inverse. The callout is anchored to the
+    confirming FVG creation candle.
+    """
+    clean = df[~df.index.duplicated(keep="last")].sort_index()
+    if clean.empty:
+        return []
+
+    zones = fvg_zones if fvg_zones is not None else fvg_ifvg_order_blocks(clean)
+    fvg_events = [
+        zone for zone in zones
+        if zone.get("formationTime") is not None
+        and zone.get("originalDirection") in {"bullish", "bearish"}
+    ]
+    if not fvg_events:
+        return []
+
+    structure = market_structure(
+        clean,
+        lookback=max(2, int(structure_lookback)),
+        liquidity_lookback=max(2, int(liquidity_lookback)),
+        show_liquidity=True,
+    )
+    _, sweep_markers = _liquidity_sweeps(clean, max(2, int(liquidity_lookback)))
+    sweeps = [marker for marker in sweep_markers if marker.get("direction") in {"bullish", "bearish"}]
+    mss_events = [level for level in structure.get("levels", []) if level.get("label") == "CHoCH"]
+
+    callouts: list[dict] = []
+    sequences = {
+        "bullish": ("bearish", "bullish", "bullish"),
+        "bearish": ("bullish", "bearish", "bearish"),
+    }
+    for direction, (prior_direction, sweep_direction, mss_direction) in sequences.items():
+        confirming = sorted(
+            [zone for zone in fvg_events if zone.get("originalDirection") == direction],
+            key=lambda zone: int(zone["formationTime"]),
+        )
+        for zone in confirming:
+            formation_time = int(zone["formationTime"])
+            prior_fvgs = [
+                prior for prior in fvg_events
+                if prior.get("originalDirection") == prior_direction
+                and int(prior["formationTime"]) < formation_time
+            ]
+            if not prior_fvgs:
+                continue
+            prior_time = max(int(prior["formationTime"]) for prior in prior_fvgs)
+            candidate_sweeps = [
+                sweep for sweep in sweeps
+                if sweep.get("direction") == sweep_direction
+                and prior_time < int(sweep["time"]) < formation_time
+            ]
+            if not candidate_sweeps:
+                continue
+            sweep_time = max(int(sweep["time"]) for sweep in candidate_sweeps)
+            candidate_mss = [
+                level for level in mss_events
+                if level.get("direction") == mss_direction
+                and sweep_time < int(level["time"]) < formation_time
+            ]
+            if not candidate_mss:
+                continue
+            mss_time = max(int(level["time"]) for level in candidate_mss)
+            callouts.append(
+                {
+                    "time": formation_time,
+                    "price": float(zone["bottom"] if direction == "bullish" else zone["top"]),
+                    "direction": direction,
+                    "label": "BUY ZONE" if direction == "bullish" else "SELL ZONE",
+                    "sweepTime": sweep_time,
+                    "mssTime": mss_time,
+                }
+            )
+
+    return sorted(callouts, key=lambda item: int(item["time"]))[-40:]
 
 
 def _infer_time_step(times: list[int]) -> int:
@@ -739,6 +1050,7 @@ def _structure_level(point: dict, end_time: int, label: str, color: str) -> dict
         "time": int(end_time),
         "price": float(point["price"]),
         "label": label,
+        "direction": "bullish" if color in {"#14a889", "#14b8a6", "#16a34a"} else "bearish",
         "color": color,
         "style": "solid",
     }
@@ -877,6 +1189,7 @@ def _liquidity_sweeps(df: pd.DataFrame, lookback: int = 30) -> tuple[list[dict],
                     markers.append(
                         {
                             "time": int(ts.timestamp()),
+                            "direction": "bearish",
                             "position": "aboveBar",
                             "color": "#a855f7",
                             "shape": "circle",
@@ -906,6 +1219,7 @@ def _liquidity_sweeps(df: pd.DataFrame, lookback: int = 30) -> tuple[list[dict],
                     markers.append(
                         {
                             "time": int(ts.timestamp()),
+                            "direction": "bullish",
                             "position": "belowBar",
                             "color": "#14b8a6",
                             "shape": "circle",
