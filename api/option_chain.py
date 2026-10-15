@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pandas as pd
+import re
 
 
 def _number_from_keys(item: dict[str, Any], keys: tuple[str, ...], default: float = 0.0) -> float:
@@ -39,9 +40,18 @@ class OptionChain:
             option_type = item.get("option_type")
             if option_type not in {"CE", "PE"}:
                 continue
+            option_symbol = item.get("symbol") or ""
+            expiry = item.get("expiry") or item.get("expiry_date") or item.get("expiryDate") or ""
+            if not expiry:
+                # FYERS symbols generally contain the expiry token between the
+                # underlying and strike. Keep the raw token for grouping even
+                # when the API response omits a separate expiry field.
+                match = re.search(r"(?:NIFTY|SENSEX)(\d{2}[A-Z]{3}\d{2}|\d{2}[A-Z]{3})", option_symbol)
+                expiry = match.group(1) if match else ""
             records.append(
                 {
-                    "symbol": item.get("symbol") or "",
+                    "symbol": option_symbol,
+                    "expiry": str(expiry),
                     "strike": int(float(item.get("strike_price", 0))),
                     "type": option_type,
                     "ltp": float(item.get("ltp", 0) or 0),
