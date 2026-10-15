@@ -40,11 +40,21 @@ Optional app lock and Telegram alert secrets:
 export APP_LOGIN_CODE="123456"
 export TELEGRAM_BOT_TOKEN_1="your-bot-token"
 export TELEGRAM_CHAT_ID_1="your-chat-id"
+export TELEGRAM_BOT_TOKEN="your-bot-token"
+export TELEGRAM_CHAT_ID="your-chat-id"
 export TELEGRAM_BOT_TOKEN_2="friend-bot-token"
 export TELEGRAM_CHAT_ID_2="friend-chat-id"
 ```
 
 The app sends fresh BUY, SELL, BoS, CHoCH, Bullish OB, and Bearish OB alerts up to 10 times, spaced 30 seconds apart. It also supports one shared bot with multiple chats using `TELEGRAM_BOT_TOKEN` and comma-separated `TELEGRAM_CHAT_IDS`.
+
+## Option Flow History Backup
+
+The existing `Option Flow History` table is backed up to Supabase when the Supabase variables above are configured. Run `supabase_schema.sql` to create `option_flow_snapshots`.
+
+The repository also includes `.github/workflows/option-flow-history.yml`, which logs into FYERS, fetches the option chain, calculates PE/CE volume deltas and OI changes, and writes one row to Supabase. Add these GitHub repository secrets: `FYERS_FY_ID`, `FYERS_APP_ID`, `FYERS_APP_SECRET`, `FYERS_REDIRECT_URI`, `FYERS_PIN`, `FYERS_TOTP_KEY`, `SUPABASE_URL`, and `SUPABASE_SERVICE_ROLE_KEY`.
+
+GitHub Actions' hosted scheduler has a documented five-minute minimum, so the workflow is set to every 5 minutes. For an exact 3-minute cadence, run the same `python scripts/collect_option_flow.py` command from a worker or scheduler that supports 3-minute intervals. The Streamlit app itself can still refresh at the configured cadence while open.
 
 ## Included
 
@@ -84,3 +94,13 @@ on public.candles (symbol, resolution, timestamp);
 The app keeps roughly the last 4 days by deleting older candle rows during refresh. If Supabase secrets are missing, the app automatically falls back to direct FYERS pulls.
 
 The same SQL file also creates `signal_alerts`, which prevents duplicate Telegram alerts on refresh.
+
+## Professional Paper Trading
+
+Run the standalone paper-trading app with `python3 -m streamlit run paper_app.py`. It creates 12 independent paper portfolios:
+
+- NIFTY Slot 1–4
+- BANKNIFTY Slot 1–4
+- SENSEX Slot 1–4
+
+All portfolios use live FYERS quotes but simulated orders only. Market buys use the live ask and market sells use the live bid when available; limit and stop orders remain pending until the next refresh meets their trigger. Orders, fills, positions, cash, P&L, and equity snapshots are stored in `data/paper_trading.db` and can be exported as CSV or Excel. No paper action calls a FYERS order API.
