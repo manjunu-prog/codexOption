@@ -647,10 +647,24 @@ def render_pnl_analyser(chain_df: pd.DataFrame, client, index_name: str, strike_
             st.session_state.pop(key, None)
     pnl_index_name = st.selectbox("Underlying", pnl_index_options, index=option_index(pnl_index_options, index_name, 0), key="pnl_underlying")
     if pnl_index_name == index_name:
-        pnl_chain_df = chain_df
+        # The chart can use a narrow strike window, but the P&L analyser
+        # needs a wider range so users can build spreads farther from ATM.
+        try:
+            pnl_chain_df = load_chain(
+                client,
+                INDEX_CONFIG[pnl_index_name]["spot"],
+                max(50, strike_window, INDEX_CONFIG[pnl_index_name]["strikecount"]),
+            )
+        except Exception as exc:
+            st.error(f"Unable to load {pnl_index_name} option chain: {exc}")
+            return
     else:
         try:
-            pnl_chain_df = load_chain(client, INDEX_CONFIG[pnl_index_name]["spot"], max(strike_window, INDEX_CONFIG[pnl_index_name]["strikecount"]))
+            pnl_chain_df = load_chain(
+                client,
+                INDEX_CONFIG[pnl_index_name]["spot"],
+                max(50, strike_window, INDEX_CONFIG[pnl_index_name]["strikecount"]),
+            )
         except Exception as exc:
             st.error(f"Unable to load {pnl_index_name} option chain: {exc}")
             return
