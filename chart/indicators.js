@@ -16,29 +16,36 @@ class IndicatorEngine {
 
         this.chart = chartEngine.chart;
         this.series = {};
+        this.priceLines = {};
         this.zones = [];
         this.structureZones = [];
+        this.volumePocLevels = [];
         this.alphaTrendFill = [];
         this.labels = [];
         this.zoneWatchFrame = null;
         this.alphaTrendFrame = null;
+        this.volumePocFrame = null;
         this.overlayTrackingFrame = null;
         this.lastZoneSignature = "";
         this.lastAlphaTrendSignature = "";
+        this.lastVolumePocSignature = "";
         this.alphaTrendLayer = this.createAlphaTrendLayer();
         this.zoneLayer = this.createZoneLayer();
         this.labelLayer = this.createLabelLayer();
+        this.calloutLayer = this.createCalloutLayer();
         this.chart.timeScale().subscribeVisibleLogicalRangeChange(()=>{
             this.scheduleOverlayRender();
         });
         this.chart.timeScale().subscribeVisibleTimeRangeChange(()=>{
             this.renderAlphaTrendFill();
             this.renderZones();
+            this.renderVolumePOC();
             this.renderLabels();
         });
         window.addEventListener("resize",()=>{
             this.renderAlphaTrendFill();
             this.renderZones();
+            this.renderVolumePOC();
             this.renderLabels();
         });
         this.chartEngine.container.addEventListener("pointermove",()=>{
@@ -78,6 +85,16 @@ class IndicatorEngine {
         const parent = this.chartEngine.container.parentElement;
         const layer = document.createElement("div");
         layer.className = "labelLayer";
+        parent.appendChild(layer);
+        return layer;
+
+    }
+
+    createCalloutLayer(){
+
+        const parent = this.chartEngine.container.parentElement;
+        const layer = document.createElement("div");
+        layer.className = "calloutLayer";
         parent.appendChild(layer);
         return layer;
 
@@ -203,6 +220,42 @@ class IndicatorEngine {
                 : String(level.label || "").startsWith("S")
                     ? "cprSupport"
                     : "cprCentral"
+        })));
+
+    }
+
+    setVolumePOC(data){
+
+        this.removeByPrefix("VPOC_");
+        (this.priceLines.volumePoc || []).forEach(line=>{
+            try{ this.chartEngine.candleSeries.removePriceLine(line); }catch(e){}
+        });
+        this.priceLines.volumePoc = [];
+        this.volumePocLevels = (data && data.levels ? data.levels : []).filter(level =>
+            level &&
+            level.startTime != null &&
+            level.endTime != null &&
+            Number.isFinite(level.price)
+        );
+        this.volumePocLevels.forEach(level=>{
+            const line = this.chartEngine.candleSeries.createPriceLine({
+                price: level.price,
+                color: level.color || (level.kind === "present" ? "#111827" : "#64748b"),
+                lineWidth: level.width || (level.kind === "present" ? 3 : 2),
+                lineStyle: level.style === "dashed" ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
+                axisLabelVisible: true,
+                title: level.label || "POC"
+            });
+            this.priceLines.volumePoc.push(line);
+        });
+        this.renderVolumePOC();
+        setTimeout(()=>this.renderVolumePOC(), 100);
+
+        this.setLabels("volumePoc", this.volumePocLevels.map(level=>({
+            time: level.labelTime || level.endTime,
+            price: level.price,
+            text: level.label,
+            tone: level.kind === "present" ? "present" : "previous"
         })));
 
     }
@@ -401,6 +454,43 @@ class IndicatorEngine {
 
     }
 
+    setCISD(signals){
+
+        this.setLabels("cisd", (signals || []).map(signal=>({
+            time: signal.time,
+            price: signal.price,
+            text: signal.label || (signal.direction === "bullish" ? "CISD BULL" : "CISD BEAR"),
+            tone: signal.direction === "bullish" ? "bull" : "bear"
+        })));
+
+    }
+
+    setCallouts(callouts){
+
+        const items = callouts || [];
+        this.setLabels("callout", items.filter(callout=>callout.placement !== "topLeft").map(callout=>({
+            time: callout.time,
+            price: callout.price,
+            text: callout.label,
+            tone: callout.tone || (callout.direction === "bullish" ? "buy" : "sell")
+        })));
+        this.renderCornerCallouts(items.filter(callout=>callout.placement === "topLeft"));
+
+    }
+
+    renderCornerCallouts(callouts){
+
+        if(!this.calloutLayer) return;
+        this.calloutLayer.innerHTML = "";
+        callouts.slice(-4).forEach(callout=>{
+            const item = document.createElement("div");
+            item.className = `cornerCallout ${callout.tone || "neutral"}`;
+            item.textContent = callout.label || "";
+            this.calloutLayer.appendChild(item);
+        });
+
+    }
+
     setZones(zones){
 
         this.zones = (zones || []).filter(zone =>
@@ -420,6 +510,7 @@ class IndicatorEngine {
 
         this.scheduleAlphaTrendRender();
         this.scheduleZoneRender();
+        this.scheduleVolumePOCRender();
         this.scheduleLabelRender();
 
     }
@@ -430,6 +521,7 @@ class IndicatorEngine {
         const tick = ()=>{
             this.renderAlphaTrendFill(false);
             this.renderZones(false);
+            this.renderVolumePOC(false);
             this.renderLabels();
             this.overlayTrackingFrame = requestAnimationFrame(tick);
         };
@@ -444,6 +536,7 @@ class IndicatorEngine {
         this.overlayTrackingFrame = null;
         this.renderAlphaTrendFill();
         this.renderZones();
+        this.renderVolumePOC();
         this.renderLabels();
 
     }
@@ -486,6 +579,17 @@ class IndicatorEngine {
 
         if(!this.labels || this.labels.length === 0) return;
         requestAnimationFrame(()=>this.renderLabels());
+
+    }
+
+    scheduleVolumePOCRender(){
+
+        if(this.volumePocFrame != null || !this.volumePocLevels || this.volumePocLevels.length === 0) return;
+
+        this.volumePocFrame = requestAnimationFrame(()=>{
+            this.volumePocFrame = null;
+            this.renderVolumePOC(false);
+        });
 
     }
 
@@ -584,6 +688,9 @@ class IndicatorEngine {
             const width = Math.max(right - left, 6);
             const height = Math.max(bottom - top, 4);
 
+            const chartWidth = this.chartEngine.container.clientWidth || 1;
+            if(right < -48 || left > chartWidth + 48) return;
+
             renderedZones.push({zone, left, top, width, height});
 
         });
@@ -600,6 +707,8 @@ class IndicatorEngine {
 
             const box = document.createElement("div");
             box.className = `zoneBox ${zone.kind || ""} ${zone.direction || ""}`;
+            const isHigherTimeframe = zone.sourceTf === "15m" || zone.sourceTf === "30m";
+            if(isHigherTimeframe) box.classList.add("higherTimeframe");
             box.style.left = `${left}px`;
             box.style.top = `${top}px`;
             box.style.width = `${width}px`;
@@ -612,13 +721,66 @@ class IndicatorEngine {
                 const label = document.createElement("span");
                 label.textContent = zone.label || "";
                 label.style.color = zone.text || zone.border || "#e5e7eb";
-                if(zone.labelPosition === "center"){
+                if(isHigherTimeframe){
+                    label.className = "edgeLabel";
+                }else if(zone.labelPosition === "center"){
                     label.className = "centerLabel";
                 }
                 box.appendChild(label);
             }
             this.zoneLayer.appendChild(box);
 
+        });
+        this.renderVolumePOC(true);
+
+    }
+
+    renderVolumePOC(force=true){
+
+        if(!this.zoneLayer || !this.chartEngine || !this.chartEngine.candleSeries) return;
+
+        const width = this.chartEngine.container.clientWidth || 1;
+        const rendered = [];
+
+        (this.volumePocLevels || []).forEach(level=>{
+            const x1 = this.timeToCoordinate(level.startTime);
+            const x2 = this.timeToCoordinate(level.endTime);
+            const y = this.chartEngine.candleSeries.priceToCoordinate(level.price);
+            if(x1 == null || x2 == null || y == null) return;
+
+            const left = Math.max(Math.min(x1, x2), -width);
+            const right = Math.min(Math.max(x1, x2), width * 2);
+            if(right < 0 || left > width) return;
+
+            rendered.push({
+                left,
+                right,
+                y,
+                color: level.color || (level.kind === "present" ? "#111827" : "#64748b"),
+                width: level.width || (level.kind === "present" ? 3 : 2),
+                dashed: level.style === "dashed",
+                kind: level.kind || "previous"
+            });
+        });
+
+        const signature = rendered.map(item =>
+            `${Math.round(item.left)}:${Math.round(item.right)}:${Math.round(item.y)}:${item.kind}`
+        ).join("|");
+
+        if(!force && signature === this.lastVolumePocSignature) return;
+        this.lastVolumePocSignature = signature;
+
+        this.zoneLayer.querySelectorAll(".volumePocLine").forEach(node=>node.remove());
+        rendered.forEach(item=>{
+            const line = document.createElement("div");
+            line.className = `volumePocLine ${item.kind}`;
+            line.style.left = `${item.left}px`;
+            line.style.top = `${item.y}px`;
+            line.style.width = `${Math.max(item.right - item.left, 8)}px`;
+            line.style.borderTopColor = item.color;
+            line.style.borderTopWidth = `${item.width}px`;
+            line.style.borderTopStyle = item.dashed ? "dashed" : "solid";
+            this.zoneLayer.appendChild(line);
         });
 
     }

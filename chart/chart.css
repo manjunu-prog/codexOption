@@ -102,6 +102,51 @@ html,body{
     z-index:7;
 }
 
+.calloutLayer{
+    position:absolute;
+    top:10px;
+    left:12px;
+    right:12px;
+    display:flex;
+    flex-direction:column;
+    align-items:flex-start;
+    gap:6px;
+    pointer-events:none;
+    z-index:12;
+}
+
+.cornerCallout{
+    max-width:min(720px, calc(100% - 24px));
+    padding:6px 10px;
+    border:1px solid currentColor;
+    border-radius:5px;
+    box-shadow:0 2px 8px rgba(15,23,42,.16);
+    font-size:12px;
+    font-weight:800;
+    line-height:1.2;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+}
+
+.cornerCallout.pressureBuy,
+.cornerCallout.optionPut{
+    background:rgba(6,95,70,.94);
+    color:#a7f3d0;
+}
+
+.cornerCallout.pressureSell,
+.cornerCallout.optionCall{
+    background:rgba(153,27,27,.94);
+    color:#fecaca;
+}
+
+.cornerCallout.pressureNeutral,
+.cornerCallout.optionNeutral{
+    background:rgba(51,65,85,.94);
+    color:#e2e8f0;
+}
+
 .indicatorLabel{
     position:absolute;
     transform:translate(-50%,-120%);
@@ -153,6 +198,58 @@ html,body{
 
 .indicatorLabel.structure.bear{
     color:#ef4444;
+}
+
+.indicatorLabel.cisd{
+    background:#0f172a;
+    border:1px solid #f59e0b;
+    color:#fbbf24;
+    transform:translate(-50%,90%);
+    font-size:11px;
+}
+
+.indicatorLabel.cisd.bear{
+    transform:translate(-50%,-120%);
+}
+
+.indicatorLabel.callout{
+    z-index:10;
+    font-size:12px;
+    font-weight:900;
+    letter-spacing:.04em;
+    border:2px solid currentColor;
+}
+
+.indicatorLabel.callout.buy{
+    background:#065f46;
+    color:#a7f3d0;
+    transform:translate(-50%,90%);
+}
+
+.indicatorLabel.callout.sell{
+    background:#991b1b;
+    color:#fecaca;
+    transform:translate(-50%,-120%);
+}
+
+.indicatorLabel.callout.pressureBuy,
+.indicatorLabel.callout.optionPut{
+    background:#065f46;
+    color:#a7f3d0;
+    transform:translate(-50%,90%);
+}
+
+.indicatorLabel.callout.pressureSell,
+.indicatorLabel.callout.optionCall{
+    background:#991b1b;
+    color:#fecaca;
+    transform:translate(-50%,-120%);
+}
+
+.indicatorLabel.callout.pressureNeutral,
+.indicatorLabel.callout.optionNeutral{
+    background:#334155;
+    color:#e2e8f0;
 }
 
 .indicatorLabel.angle{
@@ -247,12 +344,35 @@ html,body{
     color:#ffffff;
 }
 
+.indicatorLabel.volumePoc{
+    transform:translate(10px,-50%);
+    padding:4px 8px;
+    border-radius:4px;
+    font-size:12px;
+    font-weight:800;
+    box-shadow:0 2px 7px rgba(15,23,42,.18);
+}
+
+.indicatorLabel.volumePoc.present{
+    background:#111827;
+    color:#ffffff;
+}
+
+.indicatorLabel.volumePoc.previous{
+    background:#64748b;
+    color:#ffffff;
+}
+
 .zoneBox{
     position:absolute;
     border-width:1px;
     border-radius:2px;
     overflow:hidden;
     opacity:.95;
+}
+
+.zoneBox.higherTimeframe{
+    overflow:visible;
 }
 
 .zoneBox span{
@@ -267,6 +387,16 @@ html,body{
     text-shadow:0 1px 2px rgba(255,255,255,.75);
 }
 
+.zoneBox span.edgeLabel{
+    left:calc(100% + 8px);
+    right:auto;
+    top:50%;
+    transform:translateY(-50%);
+    font-size:12px;
+    font-weight:800;
+    text-shadow:0 1px 2px rgba(255,255,255,.9);
+}
+
 .zoneBox span.centerLabel{
     left:50%;
     right:auto;
@@ -275,6 +405,23 @@ html,body{
     font-size:15px;
     font-weight:500;
     text-shadow:0 1px 2px rgba(255,255,255,.95);
+}
+
+.volumePocLine{
+    position:absolute;
+    height:0;
+    pointer-events:none;
+    z-index:8;
+    opacity:.95;
+    transform:translateY(-50%);
+}
+
+.volumePocLine.present{
+    box-shadow:0 1px 3px rgba(15,23,42,.18);
+}
+
+.volumePocLine.previous{
+    opacity:.82;
 }
 
 .zoneBox.ifvg{
